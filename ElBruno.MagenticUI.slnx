@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src\ElBruno.MagenticUI.App\ElBruno.MagenticUI.App.csproj" />
+    <Project Path="src\ElBruno.MagenticUI.Agents\ElBruno.MagenticUI.Agents.csproj" />
+  </Folder>
+  <Folder Name="/src/tests/">
+    <Project Path="src\tests\ElBruno.MagenticUI.Agents.Tests\ElBruno.MagenticUI.Agents.Tests.csproj" />
+  </Folder>
+</Solution>

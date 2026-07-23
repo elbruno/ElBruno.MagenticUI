@@ -1,0 +1,26 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# IDE
+.vs/
+*.user
+*.suo
+*.cache
+*.DotSettings.user
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Node / Blazor WASM
+node_modules/
+wwwroot/dist/
