@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using ElBruno.MagenticUI.Agents.Agents;
 using ElBruno.MagenticUI.Agents.Models;
 using ElBruno.MagenticUI.Agents.Tools;
@@ -12,6 +11,7 @@ namespace ElBruno.MagenticUI.Agents.Orchestrator;
 
 public sealed class MagenticUIOrchestrator
 {
+    private const int MaxModelToolResultCharacters = 400;
     private readonly IChatClient _orchestratorClient;
     private readonly FileSurferTool _fileSurfer;
     private readonly WebFetchTool _webFetcher;
@@ -63,6 +63,7 @@ public sealed class MagenticUIOrchestrator
             $"Task received: {request.Prompt}", round: 0);
 
         var submitted = false;
+        var hasToolResult = false;
 
         for (int round = 1; round <= _maxRounds && !submitted && !ct.IsCancellationRequested; round++)
         {
@@ -85,7 +86,7 @@ public sealed class MagenticUIOrchestrator
             {
                 _logger.LogError(ex, "LLM call failed in round {Round}", round);
                 Report(progress, "Orchestrator", "system", $"LLM error: {ex.Message}", round);
-                return;
+                throw;
             }
 
             if (!string.IsNullOrWhiteSpace(response.Text))
@@ -100,19 +101,33 @@ public sealed class MagenticUIOrchestrator
             var textBasedCall = false;
             if (calls.Count == 0 && !string.IsNullOrWhiteSpace(response.Text))
             {
-                var textCall = TryParseTextToolCall(response.Text);
-                if (textCall is not null)
+                var textCalls = TryParseTextToolCalls(response.Text);
+                if (textCalls.Count > 0)
                 {
-                    _logger.LogDebug("Text-based tool call parsed: {Name}", textCall.Name);
-                    calls.Add(textCall);
+                    calls.AddRange(textCalls);
                     textBasedCall = true;
+
+                    if (calls.Any(call => call.Name != "Submit"))
+                        calls.RemoveAll(call => call.Name == "Submit");
                 }
             }
 
             if (calls.Count == 0)
             {
                 if (!string.IsNullOrWhiteSpace(response.Text))
+                {
+                    if (hasToolResult && TryExtractSubmitResult(response.Text, out var embeddedResult))
+                    {
+                        Report(progress, "Orchestrator", "submit", embeddedResult, round);
+                        submitted = true;
+                        break;
+                    }
+
+                    if (response.Text.TrimStart().StartsWith('{'))
+                        throw new InvalidOperationException("The model returned an incomplete tool call.");
+
                     submitted = true;
+                }
 
                 break;
             }
@@ -136,7 +151,7 @@ public sealed class MagenticUIOrchestrator
                         ? r?.ToString() ?? string.Empty
                         : string.Empty;
                     if (!string.IsNullOrWhiteSpace(submitArg))
-                        Report(progress, "Orchestrator", "assistant", submitArg, round);
+                        Report(progress, "Orchestrator", "submit", submitArg, round);
                     resultContents.Add(new FunctionResultContent(call.CallId, "Submitted successfully."));
                     continue;
                 }
@@ -171,17 +186,21 @@ public sealed class MagenticUIOrchestrator
                 Report(progress, DetermineAgentName(call.Name), "tool",
                     resultStr.Length > 2000 ? resultStr[..2000] + "...[truncated]" : resultStr, round);
 
-                resultContents.Add(new FunctionResultContent(call.CallId, resultStr));
+                resultContents.Add(new FunctionResultContent(call.CallId, TruncateToolResult(resultStr)));
+                hasToolResult = true;
             }
 
             if (textBasedCall)
             {
                 // Small models understand "user" messages with tool results better than
-                // the native Tool role, so feed the result back as a user message.
-                messages.Add(new ChatMessage(ChatRole.Assistant, response.Text!));
+                // the native Tool role, so feed the result back without echoing call JSON.
+                var parsedCall = calls[0];
                 var toolSummary = string.Join("\n\n", resultContents
                     .OfType<FunctionResultContent>()
-                    .Select(r => $"Tool output:\n{r.Result}"));
+                    .Select(r => $"Tool output from {parsedCall.Name}:\n{r.Result}"));
+                toolSummary +=
+                    $"\n\nDo not repeat {parsedCall.Name} with the same arguments. " +
+                    "Use this output, then call another needed tool or Submit the final answer.";
                 messages.Add(new ChatMessage(ChatRole.User, toolSummary));
             }
             else
@@ -234,10 +253,18 @@ public sealed class MagenticUIOrchestrator
         _fileSurfer.WriteFile(relativePath, content);
 
     [Description("Executes code.")]
-    private Task<string> ExecuteCodeDelegate(
+    private async Task<string> ExecuteCodeDelegate(
         [Description("Source code")] string code,
-        [Description("Language")] string language = "python") =>
-        _coder.ExecuteCode(code, language).ContinueWith(task => task.Result.Output, TaskScheduler.Default);
+        [Description("Language")] string language = "python")
+    {
+        var execution = await _coder.ExecuteCode(code, language);
+        if (!execution.Success)
+            return execution.Error ?? "Code execution failed.";
+
+        return string.IsNullOrWhiteSpace(execution.Output)
+            ? "Code completed with no output. Use print(...) to return computed values; do not repeat assignments without printing."
+            : execution.Output;
+    }
 
     [Description("Requests clarification from the user.")]
     private Task<string> RequestClarificationDelegate(
@@ -253,37 +280,11 @@ public sealed class MagenticUIOrchestrator
     {
         const string staticPart =
             """
-            You are MagenticUI Orchestrator. You complete tasks by calling tools.
-
-            TOOLS — call them by outputting ONLY the JSON object shown, nothing else:
-
-              Fetch a web page:
-                {"name":"WebFetcher_FetchUrl","arguments":{"url":"<URL>"}}
-
-              Read a file:
-                {"name":"FileSurfer_ReadFile","arguments":{"relativePath":"<path>"}}
-
-              List directory:
-                {"name":"FileSurfer_ListDirectory","arguments":{"relativePath":"<path>"}}
-
-              Write a file:
-                {"name":"FileSurfer_WriteFile","arguments":{"relativePath":"<path>","content":"<text>"}}
-
-              Run Python code:
-                {"name":"Coder_ExecuteCode","arguments":{"code":"<python code>","language":"python"}}
-
-              Ask user for clarification:
-                {"name":"UserProxy_RequestClarification","arguments":{"question":"<question>"}}
-
-              Deliver final answer (ALWAYS end with this):
-                {"name":"Submit","arguments":{"result":"<your complete answer>"}}
-
-            STRICT RULES:
-            1. When you need to call a tool, output ONLY the JSON object — no explanation, no markdown fences, no other text.
-            2. After receiving the tool output, call the next tool OR call Submit with your final answer.
-            3. You MUST always finish by calling Submit.
-            4. NEVER say you cannot use tools or that you cannot access the internet. You have WebFetcher_FetchUrl — use it.
-            5. Do NOT explain your plan. Just call the tool.
+            You are MagenticUI Orchestrator. Complete the task with the supplied tools.
+            To call a tool, output only one JSON object:
+            {"name":"ToolName","arguments":{"argument":"value"}}
+            Never explain a tool call or wrap it in Markdown. Use WebFetcher_FetchUrl for URLs.
+            After each tool result, call the next tool. Always finish by calling Submit with the complete answer.
 
             """;
 
@@ -297,56 +298,129 @@ public sealed class MagenticUIOrchestrator
     /// using native function-call tokens.  Handles plain JSON and ```json fenced blocks.
     /// Expected shape: {{"name":"ToolName","arguments":{{...}}}}
     /// </summary>
-    private static FunctionCallContent? TryParseTextToolCall(string text)
+    internal static FunctionCallContent? TryParseTextToolCall(string text)
+        => TryParseTextToolCalls(text).FirstOrDefault();
+
+    internal static List<FunctionCallContent> TryParseTextToolCalls(string text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return null;
+        var calls = new List<FunctionCallContent>();
+        if (string.IsNullOrWhiteSpace(text)) return calls;
 
-        // Strip markdown code fences (```json ... ``` or ``` ... ```)
-        var fenceMatch = Regex.Match(text, @"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
-            RegexOptions.IgnoreCase);
-        var candidate = fenceMatch.Success ? fenceMatch.Groups[1].Value : text;
-
-        // If the text is not purely JSON, try to find the outermost {...} that
-        // contains a "name" key.
-        if (!candidate.TrimStart().StartsWith('{'))
+        foreach (var candidate in ExtractJsonObjects(text))
         {
-            var jsonMatch = Regex.Match(candidate,
-                @"\{[^{}]*""name""[^{}]*(?:\{[^{}]*\}[^{}]*)?\}",
-                RegexOptions.Singleline);
-            if (!jsonMatch.Success) return null;
-            candidate = jsonMatch.Value;
+            try
+            {
+                using var doc = JsonDocument.Parse(candidate);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("name", out var nameProp)) continue;
+                var name = nameProp.GetString();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                var args = new Dictionary<string, object?>();
+                if (root.TryGetProperty("arguments", out var argsProp) &&
+                    argsProp.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in argsProp.EnumerateObject())
+                    {
+                        args[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                            ? prop.Value.GetString()
+                            : prop.Value.ToString();
+                    }
+                }
+
+                calls.Add(new FunctionCallContent(
+                    Guid.NewGuid().ToString("N"), name, args));
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed objects and continue with later valid calls.
+            }
         }
 
-        try
+        return calls;
+    }
+
+    private static IEnumerable<string> ExtractJsonObjects(string text)
+    {
+        for (var start = text.IndexOf('{'); start >= 0 && start < text.Length;)
         {
-            using var doc = JsonDocument.Parse(candidate.Trim());
-            var root = doc.RootElement;
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            var end = -1;
 
-            if (!root.TryGetProperty("name", out var nameProp)) return null;
-            var name = nameProp.GetString();
-            if (string.IsNullOrWhiteSpace(name)) return null;
-
-            var args = new Dictionary<string, object?>();
-            if (root.TryGetProperty("arguments", out var argsProp) &&
-                argsProp.ValueKind == JsonValueKind.Object)
+            for (var index = start; index < text.Length; index++)
             {
-                foreach (var prop in argsProp.EnumerateObject())
+                var character = text[index];
+                if (inString)
                 {
-                    args[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
-                        ? prop.Value.GetString()
-                        : prop.Value.ToString();
+                    if (escaped) escaped = false;
+                    else if (character == '\\') escaped = true;
+                    else if (character == '"') inString = false;
+                    continue;
+                }
+
+                if (character == '"') inString = true;
+                else if (character == '{') depth++;
+                else if (character == '}' && --depth == 0)
+                {
+                    end = index;
+                    break;
                 }
             }
 
-            return new FunctionCallContent(
-                callId: Guid.NewGuid().ToString("N"),
-                name: name,
-                arguments: args);
+            if (end < 0) yield break;
+            yield return text[start..(end + 1)];
+            start = text.IndexOf('{', end + 1);
         }
-        catch
+    }
+
+    internal static string TruncateToolResult(string result) =>
+        result.Length > MaxModelToolResultCharacters
+            ? result[..MaxModelToolResultCharacters] + "...[truncated]"
+            : result;
+
+    internal static bool TryExtractSubmitResult(string text, out string result)
+    {
+        result = string.Empty;
+        var submitIndex = text.IndexOf("\"Submit\"", StringComparison.OrdinalIgnoreCase);
+        if (submitIndex < 0) return false;
+
+        var resultKeyIndex = text.IndexOf("\"result\"", submitIndex, StringComparison.OrdinalIgnoreCase);
+        if (resultKeyIndex < 0) return false;
+
+        var colonIndex = text.IndexOf(':', resultKeyIndex + 8);
+        var quoteIndex = colonIndex >= 0 ? text.IndexOf('"', colonIndex + 1) : -1;
+        if (quoteIndex < 0) return false;
+
+        var escaped = false;
+        for (var index = quoteIndex + 1; index < text.Length; index++)
         {
-            return null;
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+
+            if (text[index] == '\\')
+            {
+                escaped = true;
+            }
+            else if (text[index] == '"')
+            {
+                var nextIndex = index + 1;
+                while (nextIndex < text.Length && char.IsWhiteSpace(text[nextIndex]))
+                    nextIndex++;
+                if (nextIndex >= text.Length || text[nextIndex] != '}')
+                    return false;
+
+                var jsonString = text[quoteIndex..(index + 1)];
+                result = JsonSerializer.Deserialize<string>(jsonString) ?? string.Empty;
+                return !string.IsNullOrWhiteSpace(result);
+            }
         }
+
+        return false;
     }
 
     private static void Report(

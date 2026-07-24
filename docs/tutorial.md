@@ -109,7 +109,7 @@ working directory.
    ```
    List all .txt files in the working directory, read them, and tell me:
    - Total amount across all invoices
-   - Which client has the highest total
+   - Which client has the highest total, and what that client total is
    ```
 4. Click **Start Task**
 5. Watch the feed:

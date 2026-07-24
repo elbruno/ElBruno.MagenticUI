@@ -43,7 +43,7 @@
                           rows="4"
                           @bind="taskInput"
                           @bind:event="oninput"
-                          placeholder="Describe what you want the agents to do…&#10;&#10;Example: Fetch the latest .NET release notes from the web and summarise them."
+                          placeholder="@TaskPlaceholder"
                           @onkeydown="HandleTaskKeyDown"></textarea>
                 <div class="d-flex gap-2 align-items-center">
                     <button class="btn btn-primary" @onclick="StartTask"
@@ -133,6 +133,9 @@
     private string userResponse = string.Empty;
     private IReadOnlyList<AgentMessage> cachedMessages = [];
     private ElementReference messageFeedRef;
+
+    private const string TaskPlaceholder =
+        "Describe what you want the agents to do…\n\nExample: Fetch the latest .NET release notes from the web and summarise them.";
 
     private bool IsAutoDownloadMode =>
         string.IsNullOrWhiteSpace(Config["LocalLLMs:ModelPath"]);
