@@ -1,4 +1,5 @@
 @page "/"
+@rendermode InteractiveServer
 @implements IAsyncDisposable
 @inject AgentSessionService Session
 @inject IConfiguration Config
@@ -15,15 +16,15 @@
             <span class="badge fs-6 @StatusBadgeClass">@StatusText</span>
         </div>
     </div>
-    @if (!IsModelConfigured)
+    @if (IsAutoDownloadMode)
     {
-        <div class="alert alert-warning d-flex align-items-start gap-2">
+        <div class="alert alert-info d-flex align-items-start gap-2">
             <span>⚙️</span>
             <div>
-                <strong>Model not configured.</strong>
-                Set <code>LocalLLMs:ModelPath</code> in <code>appsettings.json</code> to a local ONNX model folder.<br />
-                Compatible models: <a href="https://huggingface.co/microsoft/MagenticBrain" target="_blank">MagenticBrain</a>
-                · <a href="https://huggingface.co/microsoft/Fara1.5-9B" target="_blank">Fara1.5-9B</a>
+                <strong>Auto-download mode enabled.</strong>
+                No <code>LocalLLMs:ModelPath</code> is set, so the app will download the default model
+                (<code>phi-3.5-mini-instruct</code>) on first task run.<br />
+                Optional: set <code>LocalLLMs:ModelPath</code> in <code>appsettings.json</code> to use a local ONNX folder instead.
             </div>
         </div>
     }
@@ -46,7 +47,7 @@
                           @onkeydown="HandleTaskKeyDown"></textarea>
                 <div class="d-flex gap-2 align-items-center">
                     <button class="btn btn-primary" @onclick="StartTask"
-                            disabled="@(string.IsNullOrWhiteSpace(taskInput) || !IsModelConfigured)">
+                            disabled="@(string.IsNullOrWhiteSpace(taskInput))">
                         ▶ Start Task
                     </button>
                     <small class="text-muted">Ctrl+Enter to submit</small>
@@ -133,8 +134,8 @@
     private IReadOnlyList<AgentMessage> cachedMessages = [];
     private ElementReference messageFeedRef;
 
-    private bool IsModelConfigured =>
-        !string.IsNullOrWhiteSpace(Config["LocalLLMs:ModelPath"]);
+    private bool IsAutoDownloadMode =>
+        string.IsNullOrWhiteSpace(Config["LocalLLMs:ModelPath"]);
 
     protected override void OnInitialized()
     {
@@ -163,7 +164,7 @@
 
     private async Task StartTask()
     {
-        if (!string.IsNullOrWhiteSpace(taskInput) && IsModelConfigured)
+        if (!string.IsNullOrWhiteSpace(taskInput))
             await Session.StartTaskAsync(taskInput.Trim());
     }
 

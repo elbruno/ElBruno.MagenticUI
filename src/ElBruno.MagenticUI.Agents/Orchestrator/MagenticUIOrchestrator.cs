@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using ElBruno.MagenticUI.Agents.Agents;
 using ElBruno.MagenticUI.Agents.Models;
 using ElBruno.MagenticUI.Agents.Tools;
@@ -93,6 +95,20 @@ public sealed class MagenticUIOrchestrator
                 .SelectMany(message => message.Contents.OfType<FunctionCallContent>())
                 .ToList();
 
+            // Fallback for models (e.g. phi-3.5-mini via ONNX) that output JSON tool calls
+            // in their text instead of native function-call tokens.
+            var textBasedCall = false;
+            if (calls.Count == 0 && !string.IsNullOrWhiteSpace(response.Text))
+            {
+                var textCall = TryParseTextToolCall(response.Text);
+                if (textCall is not null)
+                {
+                    _logger.LogDebug("Text-based tool call parsed: {Name}", textCall.Name);
+                    calls.Add(textCall);
+                    textBasedCall = true;
+                }
+            }
+
             if (calls.Count == 0)
             {
                 if (!string.IsNullOrWhiteSpace(response.Text))
@@ -101,7 +117,12 @@ public sealed class MagenticUIOrchestrator
                 break;
             }
 
-            messages.AddRange(response.Messages);
+            // For native function calls, add the response messages (with FunctionCallContent)
+            // to the conversation history. For text-based calls the response is plain text —
+            // we manage history manually below to keep it compatible with small models.
+            if (!textBasedCall)
+                messages.AddRange(response.Messages);
+
             var resultContents = new List<AIContent>();
 
             foreach (var call in calls)
@@ -111,6 +132,11 @@ public sealed class MagenticUIOrchestrator
                 if (call.Name == "Submit")
                 {
                     submitted = true;
+                    var submitArg = call.Arguments?.TryGetValue("result", out var r) == true
+                        ? r?.ToString() ?? string.Empty
+                        : string.Empty;
+                    if (!string.IsNullOrWhiteSpace(submitArg))
+                        Report(progress, "Orchestrator", "assistant", submitArg, round);
                     resultContents.Add(new FunctionResultContent(call.CallId, "Submitted successfully."));
                     continue;
                 }
@@ -143,12 +169,25 @@ public sealed class MagenticUIOrchestrator
 
                 var resultStr = result?.ToString() ?? string.Empty;
                 Report(progress, DetermineAgentName(call.Name), "tool",
-                    resultStr.Length > 500 ? resultStr[..500] + "...[truncated]" : resultStr, round);
+                    resultStr.Length > 2000 ? resultStr[..2000] + "...[truncated]" : resultStr, round);
 
                 resultContents.Add(new FunctionResultContent(call.CallId, resultStr));
             }
 
-            messages.Add(new ChatMessage(ChatRole.Tool, resultContents));
+            if (textBasedCall)
+            {
+                // Small models understand "user" messages with tool results better than
+                // the native Tool role, so feed the result back as a user message.
+                messages.Add(new ChatMessage(ChatRole.Assistant, response.Text!));
+                var toolSummary = string.Join("\n\n", resultContents
+                    .OfType<FunctionResultContent>()
+                    .Select(r => $"Tool output:\n{r.Result}"));
+                messages.Add(new ChatMessage(ChatRole.User, toolSummary));
+            }
+            else
+            {
+                messages.Add(new ChatMessage(ChatRole.Tool, resultContents));
+            }
         }
 
         if (!submitted)
@@ -210,25 +249,105 @@ public sealed class MagenticUIOrchestrator
         [Description("The final answer or summary")] string result) =>
         $"Result received: {result}";
 
-    private static string BuildSystemPrompt(TaskRequest request) =>
-        $"""
-        You are the MagenticUI Orchestrator - a multi-agent coordinator powered by a local LLM.
-        You have access to the following participants and their tools:
+    private static string BuildSystemPrompt(TaskRequest request)
+    {
+        const string staticPart =
+            """
+            You are MagenticUI Orchestrator. You complete tasks by calling tools.
 
-          - FileSurfer: reads, writes, and lists files in the working directory ({request.WorkingDirectory ?? "."})
-          - WebFetcher: fetches web pages and returns their content as Markdown
-          - Coder: executes Python code via WSL2
-          - UserProxy: pauses for human clarification input from the browser
+            TOOLS — call them by outputting ONLY the JSON object shown, nothing else:
 
-        Strategy:
-        1. Break the task into steps and identify which participant should act first.
-        2. Call that participant's tool(s).
-        3. Analyze the results and decide the next step.
-        4. When you have a complete answer, call Submit with your final result.
+              Fetch a web page:
+                {"name":"WebFetcher_FetchUrl","arguments":{"url":"<URL>"}}
 
-        Working directory: {request.WorkingDirectory ?? "(not set)"}
-        Task ID: {request.TaskId}
-        """;
+              Read a file:
+                {"name":"FileSurfer_ReadFile","arguments":{"relativePath":"<path>"}}
+
+              List directory:
+                {"name":"FileSurfer_ListDirectory","arguments":{"relativePath":"<path>"}}
+
+              Write a file:
+                {"name":"FileSurfer_WriteFile","arguments":{"relativePath":"<path>","content":"<text>"}}
+
+              Run Python code:
+                {"name":"Coder_ExecuteCode","arguments":{"code":"<python code>","language":"python"}}
+
+              Ask user for clarification:
+                {"name":"UserProxy_RequestClarification","arguments":{"question":"<question>"}}
+
+              Deliver final answer (ALWAYS end with this):
+                {"name":"Submit","arguments":{"result":"<your complete answer>"}}
+
+            STRICT RULES:
+            1. When you need to call a tool, output ONLY the JSON object — no explanation, no markdown fences, no other text.
+            2. After receiving the tool output, call the next tool OR call Submit with your final answer.
+            3. You MUST always finish by calling Submit.
+            4. NEVER say you cannot use tools or that you cannot access the internet. You have WebFetcher_FetchUrl — use it.
+            5. Do NOT explain your plan. Just call the tool.
+
+            """;
+
+        return staticPart
+            + $"Working directory: {request.WorkingDirectory ?? "(temp)"}\n"
+            + $"Task: {request.TaskId}";
+    }
+
+    /// <summary>
+    /// Parses a JSON tool call that a model emitted in its response text instead of
+    /// using native function-call tokens.  Handles plain JSON and ```json fenced blocks.
+    /// Expected shape: {{"name":"ToolName","arguments":{{...}}}}
+    /// </summary>
+    private static FunctionCallContent? TryParseTextToolCall(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        // Strip markdown code fences (```json ... ``` or ``` ... ```)
+        var fenceMatch = Regex.Match(text, @"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
+            RegexOptions.IgnoreCase);
+        var candidate = fenceMatch.Success ? fenceMatch.Groups[1].Value : text;
+
+        // If the text is not purely JSON, try to find the outermost {...} that
+        // contains a "name" key.
+        if (!candidate.TrimStart().StartsWith('{'))
+        {
+            var jsonMatch = Regex.Match(candidate,
+                @"\{[^{}]*""name""[^{}]*(?:\{[^{}]*\}[^{}]*)?\}",
+                RegexOptions.Singleline);
+            if (!jsonMatch.Success) return null;
+            candidate = jsonMatch.Value;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(candidate.Trim());
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("name", out var nameProp)) return null;
+            var name = nameProp.GetString();
+            if (string.IsNullOrWhiteSpace(name)) return null;
+
+            var args = new Dictionary<string, object?>();
+            if (root.TryGetProperty("arguments", out var argsProp) &&
+                argsProp.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in argsProp.EnumerateObject())
+                {
+                    args[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                        ? prop.Value.GetString()
+                        : prop.Value.ToString();
+                }
+            }
+
+            return new FunctionCallContent(
+                callId: Guid.NewGuid().ToString("N"),
+                name: name,
+                arguments: args);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static void Report(
         IProgress<AgentMessage> progress,

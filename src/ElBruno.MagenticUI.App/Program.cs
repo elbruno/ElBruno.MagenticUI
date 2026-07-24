@@ -31,8 +31,10 @@ builder.Services.AddLocalLLMs(options =>
 });
 
 // ── Tools ─────────────────────────────────────────────────────────────────
-var workDir = builder.Configuration["LocalLLMs:WorkingDirectory"]
-    ?? Path.Combine(Path.GetTempPath(), "magentic-sandbox");
+var configuredWorkDir = builder.Configuration["LocalLLMs:WorkingDirectory"];
+var workDir = string.IsNullOrWhiteSpace(configuredWorkDir)
+    ? Path.Combine(Path.GetTempPath(), "magentic-sandbox")
+    : configuredWorkDir;
 Directory.CreateDirectory(workDir);
 builder.Services.AddSingleton(new FileSurferTool(workDir));
 

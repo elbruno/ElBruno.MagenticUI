@@ -3,32 +3,45 @@
 [![CI Build](https://github.com/elbruno/ElBruno.MagenticUI/actions/workflows/build.yml/badge.svg)](https://github.com/elbruno/ElBruno.MagenticUI/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Blazor Server port of [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui), running local-first with ONNX models through [ElBruno.LocalLLMs](https://github.com/elbruno/ElBruno.LocalLLMs).
+Local-first Blazor Server port of [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui), powered by ONNX inference through [ElBruno.LocalLLMs](https://github.com/elbruno/ElBruno.LocalLLMs).
 
-## What this repo is
+## User manual
 
-- **Type:** Runnable .NET 8 web app (not a NuGet library)
-- **Frontend:** Blazor Server (no React, no Node.js, no npm)
-- **Inference:** Local ONNX via `ElBruno.LocalLLMs` NuGet package
-- **Flow:** Multi-agent orchestration with human-in-the-loop pauses
+For setup, walkthrough scenarios, and troubleshooting, use:
 
-## Architecture
+- **[`docs/tutorial.md`](docs/tutorial.md)**
+
+## Current architecture
 
 ```text
 src/
-├── ElBruno.MagenticUI.App        # Blazor Server host
-├── ElBruno.MagenticUI.Agents     # Orchestrator, agents, tools
+├── ElBruno.MagenticUI.App                 # Blazor Server UI/host
+├── ElBruno.MagenticUI.Agents              # Orchestrator, agents, tools
+├── ElBruno.MagenticUI.ServiceDefaults     # Aspire service defaults
 └── tests/
-    └── ElBruno.MagenticUI.Agents.Tests
+    └── ElBruno.MagenticUI.Agents.Tests    # xUnit tests
 ```
+
+- Runnable web app (not a NuGet library)
+- Blazor Server UI (no React/Node/npm pipeline)
+- Multi-agent orchestration with human-in-the-loop pauses
+- Code execution tool uses WSL2 when available
+
+## Model startup behavior
+
+`Program.cs` configures `AddLocalLLMs` with two startup modes:
+
+1. **Explicit model path** (`LocalLLMs:ModelPath` set): use that local ONNX folder.
+2. **Auto-download fallback** (`LocalLLMs:ModelPath` empty): enable `EnsureModelDownloaded = true` and download the default model (`phi-3.5-mini-instruct`) on first use.
+
+Optional `LocalLLMs:CacheDirectory` can override where auto-downloaded models are stored.
 
 ## Quick start
 
 ### Prerequisites
 
-- .NET 8 SDK
-- WSL2 + Python 3 (for code execution tooling)
-- A local ONNX model supported by ElBruno.LocalLLMs
+- .NET SDK compatible with this repo's current TFM (`net10.0`)
+- WSL2 + Python 3 (for code execution tool support)
 
 ### Run
 
@@ -40,17 +53,9 @@ dotnet run
 ### Build and test
 
 ```bash
-dotnet restore ElBruno.MagenticUI.slnx
-dotnet build ElBruno.MagenticUI.slnx
-dotnet test ElBruno.MagenticUI.slnx --framework net8.0
+dotnet build ElBruno.MagenticUI.slnx -v minimal
+dotnet test ElBruno.MagenticUI.slnx -v minimal
 ```
-
-## Documentation policy
-
-- All project documentation must live under `docs/` or feature-local folders (for example `src/<project>/` when tightly coupled to code).
-- At repository root, only `README.md` and `LICENSE` are allowed as documentation files.
-
-See [`docs/`](docs/) for documentation index.
 
 ## License
 
