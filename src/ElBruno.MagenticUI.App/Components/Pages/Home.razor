@@ -1,7 +1,222 @@
-﻿@page "/"
+@page "/"
+@implements IAsyncDisposable
+@inject AgentSessionService Session
+@inject IConfiguration Config
 
-<PageTitle>Home</PageTitle>
+<PageTitle>MagenticUI — Local Multi-Agent AI</PageTitle>
 
-<h1>Hello, world!</h1>
+<div class="container-fluid py-3 magentic-root">
+    <div class="row mb-3 align-items-center">
+        <div class="col">
+            <h2 class="mb-0 fw-bold">🧠 MagenticUI</h2>
+            <small class="text-muted">Local multi-agent AI · powered by ONNX via ElBruno.LocalLLMs</small>
+        </div>
+        <div class="col-auto">
+            <span class="badge fs-6 @StatusBadgeClass">@StatusText</span>
+        </div>
+    </div>
+    @if (!IsModelConfigured)
+    {
+        <div class="alert alert-warning d-flex align-items-start gap-2">
+            <span>⚙️</span>
+            <div>
+                <strong>Model not configured.</strong>
+                Set <code>LocalLLMs:ModelPath</code> in <code>appsettings.json</code> to a local ONNX model folder.<br />
+                Compatible models: <a href="https://huggingface.co/microsoft/MagenticBrain" target="_blank">MagenticBrain</a>
+                · <a href="https://huggingface.co/microsoft/Fara1.5-9B" target="_blank">Fara1.5-9B</a>
+            </div>
+        </div>
+    }
+    @if (Session.Status is AgentTaskStatus.Error && Session.LastError is not null)
+    {
+        <div class="alert alert-danger">
+            <strong>⚠️ Error:</strong> @Session.LastError
+        </div>
+    }
+    @if (Session.Status is AgentTaskStatus.Idle or AgentTaskStatus.Done or AgentTaskStatus.Error)
+    {
+        <div class="card mb-3 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title mb-3">New Task</h5>
+                <textarea class="form-control mb-2 task-input"
+                          rows="4"
+                          @bind="taskInput"
+                          @bind:event="oninput"
+                          placeholder="Describe what you want the agents to do…&#10;&#10;Example: Fetch the latest .NET release notes from the web and summarise them."
+                          @onkeydown="HandleTaskKeyDown"></textarea>
+                <div class="d-flex gap-2 align-items-center">
+                    <button class="btn btn-primary" @onclick="StartTask"
+                            disabled="@(string.IsNullOrWhiteSpace(taskInput) || !IsModelConfigured)">
+                        ▶ Start Task
+                    </button>
+                    <small class="text-muted">Ctrl+Enter to submit</small>
+                </div>
+            </div>
+        </div>
+    }
+    @if (Session.Status is AgentTaskStatus.Running or AgentTaskStatus.WaitingForInput)
+    {
+        <div class="mb-3">
+            <button class="btn btn-outline-danger btn-sm" @onclick="Session.CancelTask">
+                ✕ Cancel Task
+            </button>
+        </div>
+    }
+    @if (Session.Status == AgentTaskStatus.WaitingForInput && Session.PendingQuestion is not null)
+    {
+        <div class="card border-warning mb-3 shadow-sm input-request-card">
+            <div class="card-header bg-warning bg-opacity-25 fw-bold">
+                👤 Agent needs your input
+            </div>
+            <div class="card-body">
+                <p class="mb-3 fw-semibold">@Session.PendingQuestion</p>
+                <textarea class="form-control mb-2"
+                          rows="3"
+                          @bind="userResponse"
+                          @bind:event="oninput"
+                          placeholder="Type your response…"
+                          @onkeydown="HandleResponseKeyDown"
+                          autofocus></textarea>
+                <button class="btn btn-warning" @onclick="SendResponse"
+                        disabled="@(string.IsNullOrWhiteSpace(userResponse))">
+                    ↩ Send Response
+                </button>
+            </div>
+        </div>
+    }
+    @if (cachedMessages.Count > 0)
+    {
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">Agent Messages</span>
+                <span class="badge bg-secondary">@cachedMessages.Count</span>
+            </div>
+            <div class="card-body p-2 message-feed" @ref="messageFeedRef">
+                @foreach (var msg in cachedMessages)
+                {
+                    <div class="message-row @GetMessageClass(msg.AgentName)">
+                        <div class="message-header">
+                            <span>@GetAgentIcon(msg.AgentName)</span>
+                            <strong>@msg.AgentName</strong>
+                            @if (msg.Round > 0)
+                            {
+                                <span class="badge bg-secondary ms-1">Round @msg.Round</span>
+                            }
+                            <span class="badge bg-light text-dark border ms-1">@msg.Role</span>
+                            <small class="text-muted ms-auto">@msg.Timestamp.LocalDateTime.ToString("HH:mm:ss")</small>
+                        </div>
+                        @if (msg.Text.Contains('\n') || msg.Role is "tool" or "code_output")
+                        {
+                            <pre class="message-body">@msg.Text</pre>
+                        }
+                        else
+                        {
+                            <p class="message-body mb-0">@msg.Text</p>
+                        }
+                    </div>
+                }
+                @if (Session.Status == AgentTaskStatus.Running)
+                {
+                    <div class="message-row msg-default thinking-row">
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        <span class="text-muted fst-italic">Agents are working…</span>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
 
-Welcome to your new app.
+@code {
+    private string taskInput = string.Empty;
+    private string userResponse = string.Empty;
+    private IReadOnlyList<AgentMessage> cachedMessages = [];
+    private ElementReference messageFeedRef;
+
+    private bool IsModelConfigured =>
+        !string.IsNullOrWhiteSpace(Config["LocalLLMs:ModelPath"]);
+
+    protected override void OnInitialized()
+    {
+        Session.OnChanged += OnSessionChanged;
+        cachedMessages = Session.Messages;
+    }
+
+    private string StatusText => Session.Status switch
+    {
+        AgentTaskStatus.Idle           => "Idle",
+        AgentTaskStatus.Running        => "Running…",
+        AgentTaskStatus.WaitingForInput => "Waiting for input",
+        AgentTaskStatus.Done           => "Done ✓",
+        AgentTaskStatus.Error          => "Error",
+        _                              => "Unknown"
+    };
+
+    private string StatusBadgeClass => Session.Status switch
+    {
+        AgentTaskStatus.Running        => "bg-primary",
+        AgentTaskStatus.WaitingForInput => "bg-warning text-dark",
+        AgentTaskStatus.Done           => "bg-success",
+        AgentTaskStatus.Error          => "bg-danger",
+        _                              => "bg-secondary"
+    };
+
+    private async Task StartTask()
+    {
+        if (!string.IsNullOrWhiteSpace(taskInput) && IsModelConfigured)
+            await Session.StartTaskAsync(taskInput.Trim());
+    }
+
+    private async Task SendResponse()
+    {
+        if (!string.IsNullOrWhiteSpace(userResponse))
+        {
+            await Session.RespondToInputAsync(userResponse.Trim());
+            userResponse = string.Empty;
+        }
+    }
+
+    private async Task HandleTaskKeyDown(KeyboardEventArgs e)
+    {
+        if (e is { Key: "Enter", CtrlKey: true })
+            await StartTask();
+    }
+
+    private async Task HandleResponseKeyDown(KeyboardEventArgs e)
+    {
+        if (e is { Key: "Enter", CtrlKey: true })
+            await SendResponse();
+    }
+
+    private async Task OnSessionChanged()
+    {
+        cachedMessages = Session.Messages;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static string GetAgentIcon(string agentName) => agentName switch
+    {
+        "Orchestrator" => "🎯",
+        "FileSurfer"   => "📁",
+        "WebFetcher"   => "🌐",
+        "Coder"        => "💻",
+        "UserProxy"    => "👤",
+        _              => "🤖"
+    };
+
+    private static string GetMessageClass(string agentName) => agentName switch
+    {
+        "Orchestrator" => "msg-orchestrator",
+        "FileSurfer"   => "msg-filesurfer",
+        "WebFetcher"   => "msg-webfetcher",
+        "Coder"        => "msg-coder",
+        "UserProxy"    => "msg-userproxy",
+        _              => "msg-default"
+    };
+
+    public ValueTask DisposeAsync()
+    {
+        Session.OnChanged -= OnSessionChanged;
+        return ValueTask.CompletedTask;
+    }
+}

@@ -49,3 +49,60 @@ h1:focus {
 .darker-border-checkbox.form-check-input {
     border-color: #929292;
 }
+
+/* ── MagenticUI task panel ───────────────────────────────────────────────── */
+
+.task-input {
+    font-family: inherit;
+    resize: vertical;
+}
+
+.message-feed {
+    max-height: 60vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.message-row {
+    padding: 8px 12px;
+    border-radius: 6px;
+    border-left: 4px solid transparent;
+    font-size: 0.9rem;
+}
+
+.message-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+}
+
+.message-body {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.88rem;
+}
+
+.thinking-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+}
+
+/* per-agent colours */
+.msg-orchestrator { background: #f0f4ff; border-left-color: #4a6cf7; }
+.msg-filesurfer   { background: #f0fff4; border-left-color: #28a745; }
+.msg-webfetcher   { background: #fff8f0; border-left-color: #fd7e14; }
+.msg-coder        { background: #1e1e2e; border-left-color: #e83e8c; color: #cdd6f4; }
+.msg-coder .message-body { color: #a6e3a1; }
+.msg-userproxy    { background: #fffcf0; border-left-color: #ffc107; }
+.msg-default      { background: #f8f9fa; border-left-color: #6c757d; }
+
+.input-request-card {
+    border-width: 2px !important;
+}
+
