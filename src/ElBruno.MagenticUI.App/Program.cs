@@ -13,7 +13,21 @@ builder.AddServiceDefaults();
 // ── Local LLM (ONNX via ElBruno.LocalLLMs → IChatClient) ──────────────────
 builder.Services.AddLocalLLMs(options =>
 {
-    options.ModelPath = builder.Configuration["LocalLLMs:ModelPath"] ?? string.Empty;
+    var modelPath = builder.Configuration["LocalLLMs:ModelPath"];
+    if (!string.IsNullOrWhiteSpace(modelPath))
+    {
+        // Explicit pre-downloaded model path
+        options.ModelPath = modelPath;
+    }
+    else
+    {
+        // Auto-download mode: model is downloaded to the cache dir on first use
+        options.EnsureModelDownloaded = true;
+        options.Model = ElBruno.LocalLLMs.KnownModels.Phi35MiniInstruct; // fast default
+        var cacheDir = builder.Configuration["LocalLLMs:CacheDirectory"];
+        if (!string.IsNullOrWhiteSpace(cacheDir))
+            options.CacheDirectory = cacheDir;
+    }
 });
 
 // ── Tools ─────────────────────────────────────────────────────────────────

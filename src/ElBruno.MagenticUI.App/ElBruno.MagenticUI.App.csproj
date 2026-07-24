@@ -8,6 +8,9 @@
 
   <ItemGroup>
     <PackageReference Include="ElBruno.LocalLLMs" Version="0.20.0" />
+    <!-- Direct reference required: OnnxRuntimeGenAI's buildTransitive/ omits win-x64,
+         so the native onnxruntime-genai.dll is only copied when referenced directly. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.14.1" />
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.1" />
   </ItemGroup>
 
