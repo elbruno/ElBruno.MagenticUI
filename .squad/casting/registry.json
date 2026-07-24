@@ -1,0 +1,39 @@
+{
+  "agents": {
+    "lead": {
+      "persistent_name": "Morpheus",
+      "universe": "The Matrix",
+      "created_at": "2026-07-24T09:58:05.134-04:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "agents-core": {
+      "persistent_name": "Neo",
+      "universe": "The Matrix",
+      "created_at": "2026-07-24T09:58:05.134-04:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "blazor-app": {
+      "persistent_name": "Trinity",
+      "universe": "The Matrix",
+      "created_at": "2026-07-24T09:58:05.134-04:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "runtime-integration": {
+      "persistent_name": "Tank",
+      "universe": "The Matrix",
+      "created_at": "2026-07-24T09:58:05.134-04:00",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "test-engineer": {
+      "persistent_name": "Switch",
+      "universe": "The Matrix",
+      "created_at": "2026-07-24T09:58:05.134-04:00",
+      "legacy_named": false,
+      "status": "active"
+    }
+  }
+}

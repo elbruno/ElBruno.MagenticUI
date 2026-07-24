@@ -51,6 +51,10 @@ ElBruno.MagenticUI/
     └── build.yml                  ← CI: restore, build, test on ubuntu-latest
 ```
 
+### Documentation placement rule
+- Documentation must live in `docs/` or inside feature-local folders when it is code-coupled.
+- The repository root must only contain `README.md` and `LICENSE` as documentation files.
+
 ---
 
 ## Coding conventions
