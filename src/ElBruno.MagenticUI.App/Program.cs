@@ -1,34 +1,60 @@
 using ElBruno.LocalLLMs;
+using ElBruno.LocalLLMs.Diagnostics;
 using ElBruno.MagenticUI.Agents.Agents;
 using ElBruno.MagenticUI.Agents.Orchestrator;
 using ElBruno.MagenticUI.Agents.Tools;
 using ElBruno.MagenticUI.App;
 using ElBruno.MagenticUI.App.Components;
 using Microsoft.Extensions.AI;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 
+const string genAiActivitySourceName = "ElBruno.MagenticUI.GenAI";
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing.AddSource(
+        genAiActivitySourceName,
+        LocalLLMsInstrumentation.ActivitySourceName))
+    .WithMetrics(metrics => metrics.AddMeter(LocalLLMsInstrumentation.MeterName));
+
 // ── Local LLM (ONNX via ElBruno.LocalLLMs → IChatClient) ──────────────────
-builder.Services.AddLocalLLMs(options =>
+var localLlmOptions = new LocalLLMsOptions
 {
-    var modelPath = builder.Configuration["LocalLLMs:ModelPath"];
-    if (!string.IsNullOrWhiteSpace(modelPath))
-    {
-        // Explicit pre-downloaded model path
-        options.ModelPath = modelPath;
-    }
-    else
-    {
-        // Auto-download mode: model is downloaded to the cache dir on first use
-        options.EnsureModelDownloaded = true;
-        options.Model = ElBruno.LocalLLMs.KnownModels.Phi35MiniInstruct; // fast default
-        var cacheDir = builder.Configuration["LocalLLMs:CacheDirectory"];
-        if (!string.IsNullOrWhiteSpace(cacheDir))
-            options.CacheDirectory = cacheDir;
-    }
-});
+    ExecutionProvider = builder.Configuration.GetValue(
+        "LocalLLMs:ExecutionProvider",
+        ExecutionProvider.Cpu),
+    CaptureTelemetryContent = builder.Environment.IsDevelopment()
+};
+
+var modelPath = builder.Configuration["LocalLLMs:ModelPath"];
+if (!string.IsNullOrWhiteSpace(modelPath))
+{
+    localLlmOptions.ModelPath = modelPath;
+}
+else
+{
+    var modelName = builder.Configuration["LocalLLMs:ModelName"]
+        ?? KnownModels.Phi35MiniInstruct.Id;
+    localLlmOptions.Model = KnownModels.FindById(modelName)
+        ?? throw new InvalidOperationException($"Unknown LocalLLMs model '{modelName}'.");
+    localLlmOptions.EnsureModelDownloaded = true;
+
+    var cacheDirectory = builder.Configuration["LocalLLMs:CacheDirectory"];
+    if (!string.IsNullOrWhiteSpace(cacheDirectory))
+        localLlmOptions.CacheDirectory = cacheDirectory;
+}
+
+builder.Services
+    .AddChatClient(sp => new LocalChatClient(
+        localLlmOptions,
+        sp.GetRequiredService<ILoggerFactory>()))
+    .UseOpenTelemetry(
+        sourceName: genAiActivitySourceName,
+        configure: telemetry => telemetry.EnableSensitiveData = builder.Environment.IsDevelopment());
 
 // ── Tools ─────────────────────────────────────────────────────────────────
 var configuredWorkDir = builder.Configuration["LocalLLMs:WorkingDirectory"];
