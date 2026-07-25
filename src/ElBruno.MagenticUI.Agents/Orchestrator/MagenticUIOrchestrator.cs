@@ -89,9 +89,6 @@ public sealed class MagenticUIOrchestrator
                 throw;
             }
 
-            if (!string.IsNullOrWhiteSpace(response.Text))
-                Report(progress, "Orchestrator", "assistant", response.Text, round);
-
             var calls = response.Messages
                 .SelectMany(message => message.Contents.OfType<FunctionCallContent>())
                 .ToList();
@@ -104,11 +101,8 @@ public sealed class MagenticUIOrchestrator
                 var textCalls = TryParseTextToolCalls(response.Text);
                 if (textCalls.Count > 0)
                 {
-                    calls.AddRange(textCalls);
+                    calls.Add(SelectNextTextToolCall(textCalls));
                     textBasedCall = true;
-
-                    if (calls.Any(call => call.Name != "Submit"))
-                        calls.RemoveAll(call => call.Name == "Submit");
                 }
             }
 
@@ -126,6 +120,7 @@ public sealed class MagenticUIOrchestrator
                     if (response.Text.TrimStart().StartsWith('{'))
                         throw new InvalidOperationException("The model returned an incomplete tool call.");
 
+                    Report(progress, "Orchestrator", "assistant", response.Text, round);
                     submitted = true;
                 }
 
@@ -139,6 +134,7 @@ public sealed class MagenticUIOrchestrator
                 messages.AddRange(response.Messages);
 
             var resultContents = new List<AIContent>();
+            var textToolResults = new List<(string ToolName, string Result)>();
 
             foreach (var call in calls)
             {
@@ -146,12 +142,20 @@ public sealed class MagenticUIOrchestrator
 
                 if (call.Name == "Submit")
                 {
-                    submitted = true;
                     var submitArg = call.Arguments?.TryGetValue("result", out var r) == true
                         ? r?.ToString() ?? string.Empty
                         : string.Empty;
-                    if (!string.IsNullOrWhiteSpace(submitArg))
-                        Report(progress, "Orchestrator", "submit", submitArg, round);
+                    if (IsInvalidSubmitResult(submitArg))
+                    {
+                        const string rejection =
+                            "Submit rejected. Write the actual answer using the tool output; do not include tool names or orchestration instructions.";
+                        resultContents.Add(new FunctionResultContent(call.CallId, rejection));
+                        textToolResults.Add((call.Name, rejection));
+                        continue;
+                    }
+
+                    submitted = true;
+                    Report(progress, "Orchestrator", "submit", submitArg, round);
                     resultContents.Add(new FunctionResultContent(call.CallId, "Submitted successfully."));
                     continue;
                 }
@@ -187,20 +191,13 @@ public sealed class MagenticUIOrchestrator
                     resultStr.Length > 2000 ? resultStr[..2000] + "...[truncated]" : resultStr, round);
 
                 resultContents.Add(new FunctionResultContent(call.CallId, TruncateToolResult(resultStr)));
+                textToolResults.Add((call.Name, TruncateToolResult(resultStr)));
                 hasToolResult = true;
             }
 
-            if (textBasedCall)
+            if (textBasedCall && !submitted)
             {
-                // Small models understand "user" messages with tool results better than
-                // the native Tool role, so feed the result back without echoing call JSON.
-                var parsedCall = calls[0];
-                var toolSummary = string.Join("\n\n", resultContents
-                    .OfType<FunctionResultContent>()
-                    .Select(r => $"Tool output from {parsedCall.Name}:\n{r.Result}"));
-                toolSummary +=
-                    $"\n\nDo not repeat {parsedCall.Name} with the same arguments. " +
-                    "Use this output, then call another needed tool or Submit the final answer.";
+                var toolSummary = FormatTextToolResults(textToolResults);
                 messages.Add(new ChatMessage(ChatRole.User, toolSummary));
             }
             else
@@ -285,6 +282,7 @@ public sealed class MagenticUIOrchestrator
             {"name":"ToolName","arguments":{"argument":"value"}}
             Never explain a tool call or wrap it in Markdown. Use WebFetcher_FetchUrl for URLs.
             After each tool result, call the next tool. Always finish by calling Submit with the complete answer.
+            The Submit result must contain only the answer for the user, never tool names or orchestration instructions.
 
             """;
 
@@ -300,6 +298,10 @@ public sealed class MagenticUIOrchestrator
     /// </summary>
     internal static FunctionCallContent? TryParseTextToolCall(string text)
         => TryParseTextToolCalls(text).FirstOrDefault();
+
+    internal static FunctionCallContent SelectNextTextToolCall(
+        IReadOnlyList<FunctionCallContent> calls) =>
+        calls.FirstOrDefault(call => call.Name != "Submit") ?? calls[0];
 
     internal static List<FunctionCallContent> TryParseTextToolCalls(string text)
     {
@@ -379,6 +381,24 @@ public sealed class MagenticUIOrchestrator
         result.Length > MaxModelToolResultCharacters
             ? result[..MaxModelToolResultCharacters] + "...[truncated]"
             : result;
+
+    internal static string FormatTextToolResults(
+        IEnumerable<(string ToolName, string Result)> results)
+    {
+        var entries = results.ToList();
+        var output = string.Join("\n\n", entries.Select(entry =>
+            $"Result from {entry.ToolName}:\n{entry.Result}"));
+        return output +
+            "\n\nUse the results above to answer the original task. " +
+            "Call another tool only if necessary; otherwise call Submit with only the final answer.";
+    }
+
+    internal static bool IsInvalidSubmitResult(string result) =>
+        string.IsNullOrWhiteSpace(result) ||
+        result.Contains("do not repeat", StringComparison.OrdinalIgnoreCase) ||
+        result.Contains("use this output", StringComparison.OrdinalIgnoreCase) ||
+        result.Contains("call another", StringComparison.OrdinalIgnoreCase) ||
+        result.Contains("Submit the final answer", StringComparison.OrdinalIgnoreCase);
 
     internal static bool TryExtractSubmitResult(string text, out string result)
     {

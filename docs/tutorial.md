@@ -161,10 +161,17 @@ Edit `src/ElBruno.MagenticUI.App/appsettings.json`:
 | Setting | Description |
 |---------|-------------|
 | `ModelPath` | Explicit path to an extracted ONNX model folder. If empty, auto-download is used. |
-| `ModelName` | Model ID for auto-download (default: `phi-3.5-mini-instruct`). Use `magentic-brain` for the full agentic model. |
+| `ModelName` | Model ID for models with native ONNX artifacts (default: `phi-3.5-mini-instruct`). |
 | `CacheDirectory` | Override the auto-download cache (default: `%LOCALAPPDATA%\ElBruno\LocalLLMs\models`). |
+| `ExecutionProvider` | ONNX execution provider (`Cpu`, `Cuda`, `DirectML`, or `Auto`). Default: `Cpu`. |
 | `WorkingDirectory` | Sandbox directory for FileSurfer file operations. |
 | `MaxRounds` | Maximum agent rounds before the orchestrator stops (default: 15). |
+
+`microsoft/MagenticBrain` is the recommended model for this agentic workflow, but it
+does not publish native ONNX artifacts. Convert it with ONNX Runtime GenAI's model
+builder, then set `ModelPath` to the conversion output. `microsoft/Fara1.5-9B` also
+requires conversion and is intended for vision-and-action workflows rather than this
+text-only orchestrator.
 
 Restart `aspire start` after changing the config.
 

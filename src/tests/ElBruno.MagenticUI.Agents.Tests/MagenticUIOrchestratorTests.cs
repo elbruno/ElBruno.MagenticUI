@@ -44,6 +44,24 @@ public sealed class MagenticUIOrchestratorTests
     }
 
     [Fact]
+    public void SelectNextTextToolCall_WhenSubmitAndToolArePresent_SelectsOnlyTool()
+    {
+        // Arrange
+        var calls = MagenticUIOrchestrator.TryParseTextToolCalls(
+            """
+            {"name":"Submit","arguments":{"result":"Premature answer"}}
+            {"name":"WebFetcher_FetchUrl","arguments":{"url":"https://elbruno.com"}}
+            {"name":"Coder_ExecuteCode","arguments":{"code":"summarize(content)"}}
+            """);
+
+        // Act
+        var selected = MagenticUIOrchestrator.SelectNextTextToolCall(calls);
+
+        // Assert
+        Assert.Equal("WebFetcher_FetchUrl", selected.Name);
+    }
+
+    [Fact]
     public void TruncateToolResult_WhenResultExceedsModelBudget_TruncatesIt()
     {
         // Arrange
@@ -89,5 +107,47 @@ public sealed class MagenticUIOrchestratorTests
 
         // Assert
         Assert.False(found);
+    }
+
+    [Fact]
+    public void FormatTextToolResults_WhenMultipleToolsRun_PreservesToolNames()
+    {
+        // Arrange
+        (string ToolName, string Result)[] results =
+        [
+            ("WebFetcher_FetchUrl", "Page content"),
+            ("Coder_ExecuteCode", "Computed summary")
+        ];
+
+        // Act
+        var formatted = MagenticUIOrchestrator.FormatTextToolResults(results);
+
+        // Assert
+        Assert.Contains("Result from WebFetcher_FetchUrl:\nPage content", formatted);
+        Assert.Contains("Result from Coder_ExecuteCode:\nComputed summary", formatted);
+    }
+
+    [Theory]
+    [InlineData("Do not repeat WebFetcher_FetchUrl with the same arguments.")]
+    [InlineData("Use this output, then call another needed tool or Submit the final answer.")]
+    [InlineData("")]
+    public void IsInvalidSubmitResult_WhenResultContainsControlInstructions_RejectsIt(string result)
+    {
+        // Act
+        var invalid = MagenticUIOrchestrator.IsInvalidSubmitResult(result);
+
+        // Assert
+        Assert.True(invalid);
+    }
+
+    [Fact]
+    public void IsInvalidSubmitResult_WhenResultIsARealAnswer_AcceptsIt()
+    {
+        // Act
+        var invalid = MagenticUIOrchestrator.IsInvalidSubmitResult(
+            "El Bruno writes about local AI, .NET, and developer tools.");
+
+        // Assert
+        Assert.False(invalid);
     }
 }

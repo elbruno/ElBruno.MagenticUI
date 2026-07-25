@@ -22,9 +22,10 @@
             <span>⚙️</span>
             <div>
                 <strong>Auto-download mode enabled.</strong>
-                No <code>LocalLLMs:ModelPath</code> is set, so the app will download the default model
-                (<code>phi-3.5-mini-instruct</code>) on first task run.<br />
-                Optional: set <code>LocalLLMs:ModelPath</code> in <code>appsettings.json</code> to use a local ONNX folder instead.
+                No <code>LocalLLMs:ModelPath</code> is set, so the app will download
+                <code>@ConfiguredModelName</code> on first task run.<br />
+                For the agent-tuned model, convert <code>microsoft/MagenticBrain</code> to ONNX and set
+                <code>LocalLLMs:ModelPath</code> to that folder.
             </div>
         </div>
     }
@@ -139,6 +140,9 @@
 
     private bool IsAutoDownloadMode =>
         string.IsNullOrWhiteSpace(Config["LocalLLMs:ModelPath"]);
+
+    private string ConfiguredModelName =>
+        Config["LocalLLMs:ModelName"] ?? "phi-3.5-mini-instruct";
 
     protected override void OnInitialized()
     {
