@@ -17,6 +17,8 @@
 | Trinity | Blazor App Dev | .squad/agents/trinity/charter.md | ⚛️ Frontend |
 | Tank | Runtime/Integration Dev | .squad/agents/tank/charter.md | ⚙️ Platform |
 | Switch | Test Engineer | .squad/agents/switch/charter.md | 🧪 QA |
+| Dozer | Docs & Onboarding Experience | .squad/agents/dozer/charter.md | 📝 Docs |
+| Mouse | Content & Social Storyteller | .squad/agents/mouse/charter.md | 📝 DevRel |
 | Scribe | Session Logger | .squad/agents/scribe/charter.md | 📋 Scribe |
 | Ralph | Work Monitor | .squad/agents/ralph/charter.md | 🔄 Ralph |
 | Rai | RAI Reviewer | .squad/agents/rai/charter.md | 🛡️ RAI |

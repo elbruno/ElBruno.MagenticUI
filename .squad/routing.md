@@ -12,6 +12,8 @@ How to decide who handles what.
 | Runtime integration, config, build hygiene | Tank | NuGet wiring, model path config, WSL2 execution plumbing |
 | Code review | Morpheus | Review PRs, check quality, suggest improvements |
 | Testing | Switch | Write tests, find edge cases, verify fixes |
+| Documentation readability and onboarding UX | Dozer | README clarity, quickstart flow, setup/test instructions, docs structure |
+| Blog, social posts, and visual storytelling | Mouse | Blog drafts, LinkedIn/X post variants, campaign copy, image prompt packs |
 | Scope & priorities | Morpheus | What to build next, trade-offs, decisions |
 | Session logging | Scribe | Automatic — never needs routing |
 | RAI review | Rai | Content safety, bias checks, credential detection, ethical review |
