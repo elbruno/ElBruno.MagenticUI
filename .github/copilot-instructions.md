@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-**ElBruno.MagenticUI** is a standalone .NET 8 application that ports [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui) to the .NET ecosystem using **Blazor Server** for the frontend and **ElBruno.LocalLLMs** for local ONNX model inference.
+**ElBruno.MagenticUI** is a standalone .NET 10 application that ports [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui) to the .NET ecosystem using **Blazor Server** for the frontend and **ElBruno.LocalLLMs** for local ONNX model inference.
 
 It is NOT a NuGet library. It is a **runnable web application** that lets users interact with a multi-agent system powered by local LLMs.
 
@@ -36,20 +36,26 @@ ElBruno.MagenticUI.App          ← Blazor Server host (ASP.NET Core)
 ElBruno.MagenticUI/
 ├── ElBruno.MagenticUI.slnx       ← XML solution (always .slnx, never .sln)
 ├── Directory.Build.props          ← Shared MSBuild properties for all projects
-├── global.json                    ← SDK 8.0.0 + rollForward latestMajor
+├── global.json                    ← SDK 10.0.302 + rollForward latestMajor
 ├── .gitignore
 ├── README.md
 ├── LICENSE
 ├── docs/                          ← All documentation except README and LICENSE
 ├── images/                        ← Images (nuget_logo.png etc — not needed here but reserved)
 ├── src/
+│   ├── ElBruno.MagenticUI.AppHost/    ← Aspire AppHost
 │   ├── ElBruno.MagenticUI.App/       ← Blazor Server application
 │   ├── ElBruno.MagenticUI.Agents/    ← Agents library
+│   ├── ElBruno.MagenticUI.ServiceDefaults/ ← Aspire service defaults
+│   ├── scripts/                      ← Repository scripts (when needed)
 │   └── tests/
 │       └── ElBruno.MagenticUI.Agents.Tests/  ← xUnit tests
 └── .github/workflows/
     └── build.yml                  ← CI: restore, build, test on ubuntu-latest
 ```
+
+### Source placement rule
+- Keep all source code, tests, and scripts under `src/`.
 
 ### Documentation placement rule
 - Documentation must live in `docs/` or inside feature-local folders when it is code-coupled.
@@ -63,8 +69,8 @@ ElBruno.MagenticUI/
 - C# 12+, `LangVersion: latest`
 - `Nullable: enable` — all nullable warnings treated as errors
 - `ImplicitUsings: enable`
-- Target `net8.0` for the App and Agents projects (single target — no multi-targeting for apps)
-- Test projects target `net8.0` only
+- Target `net10.0` for the App and Agents projects (single target — no multi-targeting for apps)
+- Test projects target `net10.0` only
 
 ### Naming
 - Agents: `{Role}Agent.cs` — e.g. `FileSurferAgent.cs`, `UserProxyAgent.cs`
@@ -119,7 +125,7 @@ public void SetResponse(string response) => _pending?.TrySetResult(response);
 - Arrange / Act / Assert with section comments
 - Do NOT launch real WSL2 or real ONNX models in tests — use mocks/fakes
 - Mark tests that require external resources with `[Fact(Skip = "Requires WSL2")]`
-- Target: `net8.0` only
+- Target: `net10.0` only
 
 ---
 

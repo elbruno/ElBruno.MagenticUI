@@ -1,9 +1,13 @@
 # ElBruno.MagenticUI
 
-[![CI Build](https://github.com/elbruno/ElBruno.MagenticUI/actions/workflows/build.yml/badge.svg)](https://github.com/elbruno/ElBruno.MagenticUI/actions/workflows/build.yml)
+[![CI Build](https://img.shields.io/github/actions/workflow/status/elbruno/ElBruno.MagenticUI/build.yml?branch=main&label=CI%20Build)](https://github.com/elbruno/ElBruno.MagenticUI/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Local-first Blazor Server port of [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui), powered by ONNX inference through [ElBruno.LocalLLMs](https://github.com/elbruno/ElBruno.LocalLLMs).
+## About
+
+C# local-first multi-agent web app using ONNX Runtime, compatible with Microsoft.Extensions.AI through [ElBruno.LocalLLMs](https://github.com/elbruno/ElBruno.LocalLLMs).
+
+This project is a Blazor Server port of [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui), designed for on-device inference and human-in-the-loop orchestration workflows.
 
 ## User manual
 
@@ -15,12 +19,16 @@ For setup, walkthrough scenarios, and troubleshooting, use:
 
 ```text
 src/
+├── ElBruno.MagenticUI.AppHost             # Aspire AppHost/orchestration
 ├── ElBruno.MagenticUI.App                 # Blazor Server UI/host
 ├── ElBruno.MagenticUI.Agents              # Orchestrator, agents, tools
 ├── ElBruno.MagenticUI.ServiceDefaults     # Aspire service defaults
+├── scripts/                               # Optional repo scripts (when needed)
 └── tests/
     └── ElBruno.MagenticUI.Agents.Tests    # xUnit tests
 ```
+
+Repository rule: source code, tests, and scripts must live under `src/`.
 
 - Runnable web app (not a NuGet library)
 - Blazor Server UI (no React/Node/npm pipeline)
@@ -46,8 +54,7 @@ Optional `LocalLLMs:CacheDirectory` can override where auto-downloaded models ar
 ### Run
 
 ```bash
-cd src/ElBruno.MagenticUI.App
-dotnet run
+aspire start
 ```
 
 ### Build and test

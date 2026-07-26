@@ -10,7 +10,7 @@
 
 
   <ItemGroup>
-    <ProjectReference Include="../src/ElBruno.MagenticUI.App/ElBruno.MagenticUI.App.csproj" IsAspireProjectResource="true" />
+    <ProjectReference Include="../ElBruno.MagenticUI.App/ElBruno.MagenticUI.App.csproj" IsAspireProjectResource="true" />
   </ItemGroup>
 
 </Project>

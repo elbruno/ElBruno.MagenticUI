@@ -2,12 +2,10 @@
   <Folder Name="/src/">
     <Project Path="src\ElBruno.MagenticUI.App\ElBruno.MagenticUI.App.csproj" />
     <Project Path="src\ElBruno.MagenticUI.Agents\ElBruno.MagenticUI.Agents.csproj" />
+    <Project Path="src\ElBruno.MagenticUI.AppHost\ElBruno.MagenticUI.AppHost.csproj" />
     <Project Path="src\ElBruno.MagenticUI.ServiceDefaults\ElBruno.MagenticUI.ServiceDefaults.csproj" />
   </Folder>
   <Folder Name="/src/tests/">
     <Project Path="src\tests\ElBruno.MagenticUI.Agents.Tests\ElBruno.MagenticUI.Agents.Tests.csproj" />
-  </Folder>
-  <Folder Name="/aspire/">
-    <Project Path="ElBruno.MagenticUI.AppHost\ElBruno.MagenticUI.AppHost.csproj" />
   </Folder>
 </Solution>

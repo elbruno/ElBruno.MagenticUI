@@ -61,5 +61,5 @@
 - **Project:** ElBruno.MagenticUI
 - **Owner:** Copilot
 - **Created:** 2026-07-24
-- **Stack:** .NET 8, Blazor Server, ElBruno.LocalLLMs (ONNX Runtime GenAI), xUnit
+- **Stack:** .NET 10, Blazor Server, ElBruno.LocalLLMs (ONNX Runtime GenAI), xUnit
 - **Scope:** Phase 3C P1-P5, porting from C:\src\ElBruno.LocalLLMs\src\samples\MagenticUIServer\
