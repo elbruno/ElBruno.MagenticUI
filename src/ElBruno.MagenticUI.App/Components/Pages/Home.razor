@@ -3,6 +3,7 @@
 @implements IAsyncDisposable
 @inject AgentSessionService Session
 @inject IConfiguration Config
+@inject IJSRuntime JS
 
 <PageTitle>MagenticUI — Local Multi-Agent AI</PageTitle>
 
@@ -52,6 +53,29 @@
                         ▶ Start Task
                     </button>
                     <small class="text-muted">Ctrl+Enter to submit</small>
+                </div>
+                <div class="quick-actions mt-3">
+                    <small class="text-muted d-block mb-2">Quick scenarios</small>
+                    @foreach (var scenario in QuickScenarios)
+                    {
+                        <div class="quick-action-item">
+                            <div class="quick-action-title">@scenario.Title</div>
+                            <div class="quick-action-buttons">
+                                <button class="btn btn-outline-primary btn-sm" @onclick="() => UseQuickScenario(scenario.Prompt)">
+                                    Use prompt
+                                </button>
+                                <button class="btn btn-outline-success btn-sm" @onclick="() => CopyQuickScenarioPrompt(scenario)">
+                                    @(copiedScenarioTitle == scenario.Title ? "Copied ✓" : "Copy prompt")
+                                </button>
+                                <a class="btn btn-outline-secondary btn-sm"
+                                   href="@scenario.TutorialUrl"
+                                   target="_blank"
+                                   rel="noopener noreferrer">
+                                    Tutorial
+                                </a>
+                            </div>
+                        </div>
+                    }
                 </div>
             </div>
         </div>
@@ -132,8 +156,41 @@
 @code {
     private string taskInput = string.Empty;
     private string userResponse = string.Empty;
+    private string? copiedScenarioTitle;
     private IReadOnlyList<AgentMessage> cachedMessages = [];
     private ElementReference messageFeedRef;
+
+    private sealed record QuickScenario(string Title, string Prompt, string TutorialUrl);
+
+    private static readonly IReadOnlyList<QuickScenario> QuickScenarios =
+    [
+        new(
+            "Scenario 1: Summarise a web page",
+            """
+            Please fetch the page at https://elbruno.com and give me a 3-sentence summary of
+            what it is about.
+            """,
+            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial.md#scenario-1--summarise-a-web-page"),
+        new(
+            "Scenario 2: Analyse files in the sandbox",
+            """
+            List all .txt files in the working directory, read them, and tell me:
+            - Total amount across all invoices
+            - Which client has the highest total, and what that client total is
+            """,
+            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial.md#scenario-2--analyse-files-in-a-sandbox-directory"),
+        new(
+            "Scenario 3: Analyse an image with Python",
+            """
+            Use Coder_ExecuteCode to download https://raw.githubusercontent.com/elbruno/ElBruno.MagenticUI/master/images/magentic_releases.png into the working directory as magentic_releases.png.
+            Then read the PNG header in Python (standard library only) and report:
+            - width
+            - height
+            - file size in KB
+            Finally explain in 2 sentences what this image illustrates.
+            """,
+            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial.md#scenario-3--analyse-an-image-in-the-sandbox")
+    ];
 
     private const string TaskPlaceholder =
         "Describe what you want the agents to do…\n\nExample: Fetch the latest .NET release notes from the web and summarise them.";
@@ -142,7 +199,7 @@
         string.IsNullOrWhiteSpace(Config["LocalLLMs:ModelPath"]);
 
     private string ConfiguredModelName =>
-        Config["LocalLLMs:ModelName"] ?? "phi-3.5-mini-instruct";
+        Config["LocalLLMs:ModelName"] ?? "magentic-brain";
 
     protected override void OnInitialized()
     {
@@ -173,6 +230,18 @@
     {
         if (!string.IsNullOrWhiteSpace(taskInput))
             await Session.StartTaskAsync(taskInput.Trim());
+    }
+
+    private void UseQuickScenario(string prompt)
+    {
+        taskInput = prompt;
+    }
+
+    private async Task CopyQuickScenarioPrompt(QuickScenario scenario)
+    {
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", scenario.Prompt);
+        copiedScenarioTitle = scenario.Title;
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task SendResponse()

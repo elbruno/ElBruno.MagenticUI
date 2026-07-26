@@ -38,7 +38,7 @@ if (!string.IsNullOrWhiteSpace(modelPath))
 else
 {
     var modelName = builder.Configuration["LocalLLMs:ModelName"]
-        ?? KnownModels.Phi35MiniInstruct.Id;
+        ?? KnownModels.MagenticBrain.Id;
     localLlmOptions.Model = KnownModels.FindById(modelName)
         ?? throw new InvalidOperationException($"Unknown LocalLLMs model '{modelName}'.");
     localLlmOptions.EnsureModelDownloaded = true;

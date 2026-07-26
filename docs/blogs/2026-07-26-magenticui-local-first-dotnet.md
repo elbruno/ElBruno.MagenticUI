@@ -1,53 +1,42 @@
-# Building a local-first Magentic UI in .NET with ElBruno.LocalLLMs
+# Building a local-first Magentic UI in .NET (Blazor + Local LLMs + Aspire)
 
-If you are a C# developer and want an agentic app without jumping to Python stacks, this sample is for you.
+Repository links:
 
-`ElBruno.MagenticUI` is a Blazor Server port of the original [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui), using [ElBruno.LocalLLMs](https://github.com/elbruno/ElBruno.LocalLLMs) for local ONNX inference.
+- ElBruno.MagenticUI: https://github.com/elbruno/ElBruno.MagenticUI
+- ElBruno.LocalLLMs: https://github.com/elbruno/ElBruno.LocalLLMs
+- Original Magentic UI (Microsoft): https://github.com/microsoft/magentic-ui
 
-## Suggested titles (Magentic + Aspire angle)
+## TL;DR
 
-- Magentic UI for .NET: local-first agents powered by Aspire
-- From Magentic UI to Blazor: agentic workflows with ElBruno.LocalLLMs + Aspire
-- C# Agentic UX: Magentic-style orchestration, local ONNX, and Aspire observability
-- Building a .NET Magentic app with Aspire, GenAI traces, and human-in-the-loop
+- This sample brings Magentic-style multi-agent workflows to **pure .NET** with Blazor Server.
+- It uses **local ONNX inference** through ElBruno.LocalLLMs (no cloud dependency required).
+- It combines **MagenticBrain** (reasoning/delegation) and **Fara 1.5** (computer-use/vision scenarios).
+- It is orchestrated with **Aspire**, so you get service orchestration plus traces/GenAI traces out of the box.
 
-## Why this sample matters for .NET teams
+If you are a .NET developer and want to build a real multi-agent UX without moving to Python stacks, this sample is for you.
 
-- **Local-first:** run inference on your machine with ONNX Runtime GenAI.
-- **Human-in-the-loop:** orchestrator can pause and request user input.
-- **Blazor Server UX:** no React/Node/npm required.
-- **Production-friendly structure:** App, Agents, and model runtime are separated cleanly.
-- **Aspire orchestration and observability:** run the app and inspect traces/health in one place.
+`ElBruno.MagenticUI` is a Blazor Server port inspired by [microsoft/magentic-ui](https://github.com/microsoft/magentic-ui), powered by local inference via [ElBruno.LocalLLMs](https://github.com/elbruno/ElBruno.LocalLLMs), and orchestrated by Aspire.
 
-![Architecture comic (small)](./magenticui-architecture-comic-small.png)
+![MagenticUI hero banner](./magenticui-hero-banner.png)
 
-## The Microsoft research context behind this architecture
+## Why this sample matters
 
-This repository aligns with the direction described in:
+- **It brings Microsoft Research ideas into .NET practice:** this app is inspired by the MagenticLite direction and maps it into a Blazor + C# implementation.
+- **Purpose-built model collaboration:** MagenticBrain handles reasoning, delegation, and terminal-oriented tasks, while Fara 1.5 focuses on computer-use/browser tasks.
+- **System-level design over single-model assumptions:** the three parts (orchestrator + MagenticBrain + Fara 1.5) are intended to work as one coordinated system.
+- **Local-first and efficient:** the result is an agentic experience that can run on user hardware, keep data local, and support broad task coverage with smaller models.
+- **Research bet validated in code:** strong agent behavior comes from tool orchestration and action loops, not knowledge alone, enabling practical capability at lower cost.
+- **Operational visibility with Aspire:** the solution is orchestrated with Aspire, including distributed traces and GenAI traces in the dashboard.
 
-- [Fara 1.5: A New Frontier for Computer-Use AI Agents](https://www.microsoft.com/en-us/research/articles/fara1-5-computer-use-agent/)
-- [MagenticLite, MagenticBrain, Fara1.5: An agentic experience optimized for small models](https://www.microsoft.com/en-us/research/blog/magenticlite-magenticbrain-fara1-5-an-agentic-experience-optimized-for-small-models/)
+## Explaining the model stack (MagenticLite, MagenticBrain, Fara 1.5)
 
-The diagram below (from the Microsoft Research blog above) explains the relationship between MagenticLite, MagenticBrain, and Fara1.5.
+To understand how the model family fits together, use this reference visual from the original Microsoft Research article:
 
-![MagenticLite, MagenticBrain and Fara1.5 relationship](./magenticlite-magenticbrain-fara-process.png)
+[MagenticLite, MagenticBrain, Fara1.5: An agentic experience optimized for small models - Microsoft Research](https://www.microsoft.com/en-us/research/blog/magenticlite-magenticbrain-fara1-5-an-agentic-experience-optimized-for-small-models/)
 
-## Powered by Aspire: orchestration + GenAI tracing
+![Magentic releases reference image](../../images/magentic_releases.png)
 
-The solution is orchestrated with **Aspire** (`ElBruno.MagenticUI.AppHost`).  
-This gives you an operational view of the app while it runs, and makes troubleshooting much easier.
-
-Running app screenshot:
-
-![MagenticUI app running](./magenticui-app-running.png)
-
-Aspire dashboard trace view (including GenAI telemetry emitted by the app):
-
-![Aspire dashboard GenAI trace](./aspire-dashboard-genai-trace.png)
-
-## C# code: download and use MagenticBrain with ElBruno.LocalLLMs
-
-For agentic orchestration scenarios, you can use `KnownModels.MagenticBrain` and let the library handle first-run download.
+## C# sample: MagenticBrain with ElBruno.LocalLLMs
 
 ```csharp
 using ElBruno.LocalLLMs;
@@ -60,38 +49,17 @@ var options = new LocalLLMsOptions
     ExecutionProvider = ExecutionProvider.Cpu
 };
 
-using var client = await LocalChatClient.CreateAsync(
-    options,
-    progress: new Progress<ModelDownloadProgress>(p =>
-    {
-        var percent = (p.BytesDownloaded * 100d) / p.TotalBytes;
-        Console.WriteLine($"{p.FileName}: {percent:F1}%");
-    }));
+await using var client = await LocalChatClient.CreateAsync(options);
 
-var response = await client.GetResponseAsync([
-    new(ChatRole.User, "Summarize the architecture of this repository in 3 bullets.")
+var response = await client.GetResponseAsync(
+[
+    new(ChatRole.User, "Summarize the architecture of this repository in 3 bullet points.")
 ]);
 
 Console.WriteLine(response.Text);
 ```
 
-## C# code: use Fara 1.5 with ElBruno.LocalLLMs
-
-Fara is a vision-language model. Today it requires ONNX conversion first, then you point `ModelPath` to the converted folder and use `LocalVisionChatClient`.
-
-One-time download + conversion call (PowerShell):
-
-```powershell
-hf download microsoft/Fara1.5-9B --local-dir ".\fara-pytorch"
-
-python -m onnxruntime_genai.models.builder `
-  -m ".\fara-pytorch" `
-  --model_type qwen_vl `
-  -o ".\models\fara-onnx-int4" `
-  --precision int4
-```
-
-After that, your app stays fully in .NET:
+## C# sample: Fara 1.5 with ElBruno.LocalLLMs
 
 ```csharp
 using ElBruno.LocalLLMs;
@@ -100,7 +68,7 @@ using Microsoft.Extensions.AI;
 var options = new LocalLLMsOptions
 {
     Model = KnownModels.Fara15_9B,
-    ModelPath = @".\models\fara-onnx-int4", // converted ONNX folder
+    ModelPath = @".\models\fara-onnx-int4",
     MaxSequenceLength = 4096,
     Temperature = 0.1f
 };
@@ -109,7 +77,7 @@ await using var client = new LocalVisionChatClient(options);
 
 var messages = new List<ChatMessage>
 {
-    new(ChatRole.User, "Describe the interactive elements in this screenshot.")
+    new(ChatRole.User, "Describe what is happening in this screenshot.")
 };
 
 var vision = new VisionChatOptions
@@ -123,20 +91,22 @@ await foreach (var token in client.GetStreamingResponseAsync(messages, vision))
 }
 ```
 
-For the conversion workflow and constraints, see:
-- `ElBruno.LocalLLMs` Fara conversion guide: `docs/onnx-conversion-fara.md`
+## Aspire orchestration and observability
 
-## Run this sample
+The full solution is orchestrated with Aspire (`ElBruno.MagenticUI.AppHost`), which gives you:
+
+- service discovery and wiring for the app projects
+- centralized app lifecycle and environment orchestration
+- distributed traces and GenAI traces in the Aspire dashboard
+
+## Quick start
+
+From repo root:
 
 ```bash
 aspire start
 ```
 
-```bash
-dotnet build ElBruno.MagenticUI.slnx -v minimal
-dotnet test ElBruno.MagenticUI.slnx -v minimal
-```
-
 ## Final note
 
-If your world is C#, this sample gives you a practical path to experiment with local multi-agent UX in pure .NET: Blazor + ElBruno.LocalLLMs + ONNX Runtime GenAI.
+This sample gives .NET developers a practical path to build and run local-first agentic experiences with C#, Blazor Server, ElBruno.LocalLLMs, and Aspire.

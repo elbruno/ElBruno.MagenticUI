@@ -1,6 +1,6 @@
 # ElBruno.MagenticUI — Getting Started Tutorial
 
-This guide walks you through two end-to-end scenarios after you launch the app with
+This guide walks you through three end-to-end scenarios after you launch the app with
 `aspire start`.
 
 ---
@@ -12,7 +12,7 @@ This guide walks you through two end-to-end scenarios after you launch the app w
 | .NET 10 SDK | https://dotnet.microsoft.com/download |
 | Aspire CLI | `dotnet tool install -g Aspire.Cli` |
 | Windows x64 | Required for CPU/DirectML ONNX inference |
-| ~4 GB free disk space | For the default Phi-3.5-mini model download |
+| ~4+ GB free disk space | Depends on the selected model download |
 
 > **GPU / DirectML optional.** The app auto-falls-back to CPU if DirectML or CUDA is
 > unavailable. Inference on CPU is slower but fully functional.
@@ -37,9 +37,10 @@ Open the **App URL** (`https://localhost:7127`) in your browser. The MagenticUI 
 appears immediately.
 
 **First run only:** If `LocalLLMs:ModelPath` is empty in `appsettings.json`, the app
-auto-downloads `phi-3.5-mini-instruct` (~2.4 GB) to
+auto-downloads the model defined in `LocalLLMs:ModelName` to
 `%LOCALAPPDATA%\ElBruno\LocalLLMs\models\` the first time you submit a task. This takes
-a few minutes depending on your connection; progress is logged to the Aspire dashboard.
+a few minutes depending on your connection and model size; progress is logged to the
+Aspire dashboard.
 
 ---
 
@@ -134,66 +135,39 @@ FileSurfer is sandboxed to `LocalLLMs:WorkingDirectory` (defaults to
 
 ---
 
-## Human-in-the-Loop
+## Scenario 3 — Analyse an Image in the Sandbox
 
-When the orchestrator needs clarification it pauses and shows a **yellow input card**
-in the feed. Type your answer and click **Send**. The task resumes immediately.
+**Goal:** Use `Coder_ExecuteCode` to download and inspect an image with Python, then
+return a concise explanation.
 
-Example prompt that triggers clarification:
-```
-Analyse the files and save a report, but first ask me what format I prefer (CSV or JSON).
-```
+### Steps
 
----
+1. Open `https://localhost:7127`
+2. In the **task input** box, paste:
+   ```
+   Use Coder_ExecuteCode to download https://raw.githubusercontent.com/elbruno/ElBruno.MagenticUI/master/images/magentic_releases.png into the working directory as magentic_releases.png.
+   Then read the PNG header in Python (standard library only) and report:
+   - width
+   - height
+   - file size in KB
+   Finally explain in 2 sentences what this image illustrates.
+   ```
+3. Click **Start Task**
+4. Watch the feed:
+   - 🔵 **Orchestrator** plans the steps
+   - 💻 **Coder** runs Python to download and inspect the image
+   - 🔵 **Orchestrator** formats the findings and submits the answer
 
-## Configuring a Different Model
+### What to expect
 
-Edit `src/ElBruno.MagenticUI.App/appsettings.json`:
-
-```json
-"LocalLLMs": {
-  "ModelPath": "C:\\Models\\magentic-brain\\cpu\\cpu-int4-awq-block-128",
-  "WorkingDirectory": "C:\\MyTaskSandbox",
-  "MaxRounds": 20
-}
-```
-
-| Setting | Description |
-|---------|-------------|
-| `ModelPath` | Explicit path to an extracted ONNX model folder. If empty, auto-download is used. |
-| `ModelName` | Model ID for models with native ONNX artifacts (default: `phi-3.5-mini-instruct`). |
-| `CacheDirectory` | Override the auto-download cache (default: `%LOCALAPPDATA%\ElBruno\LocalLLMs\models`). |
-| `ExecutionProvider` | ONNX execution provider (`Cpu`, `Cuda`, `DirectML`, or `Auto`). Default: `Cpu`. |
-| `WorkingDirectory` | Sandbox directory for FileSurfer file operations. |
-| `MaxRounds` | Maximum agent rounds before the orchestrator stops (default: 15). |
-
-`microsoft/MagenticBrain` is the recommended model for this agentic workflow, but it
-does not publish native ONNX artifacts. Convert it with ONNX Runtime GenAI's model
-builder, then set `ModelPath` to the conversion output. `microsoft/Fara1.5-9B` also
-requires conversion and is intended for vision-and-action workflows rather than this
-text-only orchestrator.
-
-Restart `aspire start` after changing the config.
+You should get deterministic metadata (width/height/size) plus a short interpretation
+based on the referenced image context.
 
 ---
 
-## Troubleshooting
+## Additional Guides
 
-| Symptom | Fix |
-|---------|-----|
-| `DllNotFoundException: onnxruntime-genai` | Make sure `Microsoft.ML.OnnxRuntimeGenAI` is a direct reference in the `.csproj` — see [#native-dll-note](#native-dll-note) |
-| Inference stalls at "Loading model…" | Large model on slow CPU; wait or switch to a smaller model (`phi-3.5-mini-instruct`) |
-| WebFetcher returns empty | The target site may block headless requests; try a different URL |
-| Task keeps asking clarifying questions | Raise `MaxRounds` or rephrase the task to be more specific |
-
-### Native DLL Note
-
-`ElBruno.LocalLLMs` depends on `Microsoft.ML.OnnxRuntimeGenAI`. Due to a known issue
-where that package's `buildTransitive/` folder omits Windows targets, the native
-`onnxruntime-genai.dll` is not automatically copied unless you reference the package
-directly. The `ElBruno.MagenticUI.App.csproj` already has this reference; if you create
-a new project using `ElBruno.LocalLLMs`, add:
-
-```xml
-<PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.14.1" />
-```
+- [Human-in-the-Loop](./tutorial-human-in-the-loop.md)
+- [Configuring a Different Model](./tutorial-model-configuration.md)
+- [Troubleshooting](./tutorial-troubleshooting.md)
+- [Native DLL Note](./tutorial-native-dll-note.md)
