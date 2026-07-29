@@ -4,8 +4,16 @@ Edit `src/ElBruno.MagenticUI.App/appsettings.json`:
 
 ```json
 "LocalLLMs": {
-  "ModelPath": "C:\\Models\\magentic-brain\\cpu\\cpu-int4-awq-block-128",
-  "ModelName": "magentic-brain",
+  "Models": {
+    "Orchestrator": {
+      "ModelPath": "C:\\Models\\magentic-brain\\cpu\\cpu-int4-awq-block-128",
+      "ModelName": "magentic-brain"
+    },
+    "ComputerUse": {
+      "ModelPath": "C:\\Models\\fara\\cpu\\cpu-int4-awq-block-128",
+      "ModelName": "fara1.5-9b"
+    }
+  },
   "WorkingDirectory": "C:\\MyTaskSandbox",
   "MaxRounds": 20
 }
@@ -13,8 +21,8 @@ Edit `src/ElBruno.MagenticUI.App/appsettings.json`:
 
 | Setting | Description |
 |---------|-------------|
-| `ModelPath` | Explicit path to an extracted ONNX model folder. If empty, auto-download is used. |
-| `ModelName` | Model ID used when `ModelPath` is empty (default: `magentic-brain`). |
+| `Models:Orchestrator:*` | MagenticBrain reasoning/delegation model configuration. |
+| `Models:ComputerUse:*` | Fara computer-use/vision model configuration. |
 | `CacheDirectory` | Override the auto-download cache (default: `%LOCALAPPDATA%\\ElBruno\\LocalLLMs\\models`). |
 | `ExecutionProvider` | ONNX execution provider (`Cpu`, `Cuda`, `DirectML`, or `Auto`). Default: `Cpu`. |
 | `WorkingDirectory` | Sandbox directory for FileSurfer file operations. |

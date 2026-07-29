@@ -37,10 +37,13 @@ Repository rule: source code, tests, and scripts must live under `src/`.
 
 ## Model startup behavior
 
-`Program.cs` configures `AddLocalLLMs` with two startup modes:
+`Program.cs` configures local models with two startup modes:
 
-1. **Explicit model path** (`LocalLLMs:ModelPath` set): use that local ONNX folder.
-2. **Auto-download fallback** (`LocalLLMs:ModelPath` empty): enable `EnsureModelDownloaded = true` and download the default model (`phi-3.5-mini-instruct`) on first use.
+1. **Explicit model paths**: set:
+   - `LocalLLMs:Models:Orchestrator:ModelPath` (MagenticBrain role)
+   - `LocalLLMs:Models:ComputerUse:ModelPath` (Fara role)
+2. **Auto-download fallback** (path empty): enable `EnsureModelDownloaded = true` and download
+   the configured model IDs (`magentic-brain` and `fara1.5-9b`) on first use.
 
 Optional `LocalLLMs:CacheDirectory` can override where auto-downloaded models are stored.
 

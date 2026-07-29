@@ -1,4 +1,5 @@
 using ElBruno.MagenticUI.Agents.Orchestrator;
+using System.Text.Json;
 
 namespace ElBruno.MagenticUI.Agents.Tests;
 
@@ -149,5 +150,174 @@ public sealed class MagenticUIOrchestratorTests
 
         // Assert
         Assert.False(invalid);
+    }
+
+    [Fact]
+    public void TryGetRelativePath_WhenArgsContainRelativePath_ReturnsValue()
+    {
+        // Arrange
+        IDictionary<string, object?> args = new Dictionary<string, object?>
+        {
+            ["relativePath"] = "captures/step1.png"
+        };
+
+        // Act
+        var found = MagenticUIOrchestrator.TryGetRelativePath(args, out var relativePath);
+
+        // Assert
+        Assert.True(found);
+        Assert.Equal("captures/step1.png", relativePath);
+    }
+
+    [Theory]
+    [InlineData("path")]
+    [InlineData("imagePath")]
+    [InlineData("image_path")]
+    [InlineData("RelativePath")]
+    public void TryGetRelativePath_WhenArgsUseSupportedAliases_ReturnsValue(string key)
+    {
+        // Arrange
+        IDictionary<string, object?> args = new Dictionary<string, object?>
+        {
+            [key] = "captures/step2.png"
+        };
+
+        // Act
+        var found = MagenticUIOrchestrator.TryGetRelativePath(args, out var relativePath);
+
+        // Assert
+        Assert.True(found);
+        Assert.Equal("captures/step2.png", relativePath);
+    }
+
+    [Fact]
+    public void TryGetRelativePath_WhenValueIsJsonElementString_ReturnsValue()
+    {
+        // Arrange
+        using var document = JsonDocument.Parse("""{"relativePath":"captures/step3.png"}""");
+        IDictionary<string, object?> args = new Dictionary<string, object?>
+        {
+            ["relativePath"] = document.RootElement.GetProperty("relativePath")
+        };
+
+        // Act
+        var found = MagenticUIOrchestrator.TryGetRelativePath(args, out var relativePath);
+
+        // Assert
+        Assert.True(found);
+        Assert.Equal("captures/step3.png", relativePath);
+    }
+
+    [Fact]
+    public void TryGetRelativePath_WhenQuotedStringValue_TrimsAndUnquotes()
+    {
+        // Arrange
+        IDictionary<string, object?> args = new Dictionary<string, object?>
+        {
+            ["relativePath"] = "\"captures/step4.png\""
+        };
+
+        // Act
+        var found = MagenticUIOrchestrator.TryGetRelativePath(args, out var relativePath);
+
+        // Assert
+        Assert.True(found);
+        Assert.Equal("captures/step4.png", relativePath);
+    }
+
+    [Fact]
+    public void TryGetRelativePath_WhenMissingPathKeys_ReturnsFalse()
+    {
+        // Arrange
+        IDictionary<string, object?> args = new Dictionary<string, object?>
+        {
+            ["prompt"] = "describe this screenshot"
+        };
+
+        // Act
+        var found = MagenticUIOrchestrator.TryGetRelativePath(args, out var relativePath);
+
+        // Assert
+        Assert.False(found);
+        Assert.Equal(string.Empty, relativePath);
+    }
+
+    [Fact]
+    public void TryBuildImageDataUri_WhenImageExists_ReturnsDataUri()
+    {
+        // Arrange
+        var outputDir = Path.Combine(AppContext.BaseDirectory, "test-artifacts");
+        Directory.CreateDirectory(outputDir);
+        var imagePath = Path.Combine(outputDir, "pixel.png");
+        var pngBytes = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AArgB9VPfLSEAAAAASUVORK5CYII=");
+        File.WriteAllBytes(imagePath, pngBytes);
+
+        try
+        {
+            // Act
+            var created = MagenticUIOrchestrator.TryBuildImageDataUri(imagePath, out var dataUri);
+
+            // Assert
+            Assert.True(created);
+            Assert.StartsWith("data:image/png;base64,", dataUri, StringComparison.Ordinal);
+            Assert.Contains(Convert.ToBase64String(pngBytes), dataUri, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(imagePath);
+        }
+    }
+
+    [Fact]
+    public void TryBuildImageDataUri_WhenExtensionIsUnsupported_ReturnsFalse()
+    {
+        // Arrange
+        var outputDir = Path.Combine(AppContext.BaseDirectory, "test-artifacts");
+        Directory.CreateDirectory(outputDir);
+        var imagePath = Path.Combine(outputDir, "pixel.bmp");
+        File.WriteAllBytes(imagePath, [0x42, 0x4D, 0x00]);
+
+        try
+        {
+            // Act
+            var created = MagenticUIOrchestrator.TryBuildImageDataUri(imagePath, out var dataUri);
+
+            // Assert
+            Assert.False(created);
+            Assert.Equal(string.Empty, dataUri);
+        }
+        finally
+        {
+            File.Delete(imagePath);
+        }
+    }
+
+    [Theory]
+    [InlineData("Computer_DescribeImage", true)]
+    [InlineData("Computer_Click", true)]
+    [InlineData("WebFetcher_FetchUrl", false)]
+    [InlineData("", false)]
+    public void IsComputerAction_ReturnsExpectedResult(string toolName, bool expected)
+    {
+        // Act
+        var isComputerAction = MagenticUIOrchestrator.IsComputerAction(toolName);
+
+        // Assert
+        Assert.Equal(expected, isComputerAction);
+    }
+
+    [Theory]
+    [InlineData("Computer_DescribeImage", true)]
+    [InlineData("Computer_Click", false)]
+    [InlineData("computer_describeimage", false)]
+    [InlineData("", false)]
+    public void IsComputerScreenshotAction_ReturnsExpectedResult(string toolName, bool expected)
+    {
+        // Act
+        var isScreenshotAction = MagenticUIOrchestrator.IsComputerScreenshotAction(toolName);
+
+        // Assert
+        Assert.Equal(expected, isScreenshotAction);
     }
 }

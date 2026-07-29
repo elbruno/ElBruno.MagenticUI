@@ -81,7 +81,9 @@ ElBruno.MagenticUI/
 
 ### DI & configuration
 - Register everything via `IServiceCollection` extension methods
-- Read model path from `appsettings.json` key `LocalLLMs:ModelPath`
+- Read model paths from `appsettings.json` keys:
+  - `LocalLLMs:Models:Orchestrator:ModelPath`
+  - `LocalLLMs:Models:ComputerUse:ModelPath`
 - Never hardcode paths or API keys
 
 ### Agent communication pattern

@@ -36,8 +36,9 @@ App:       https://localhost:7127
 Open the **App URL** (`https://localhost:7127`) in your browser. The MagenticUI panel
 appears immediately.
 
-**First run only:** If `LocalLLMs:ModelPath` is empty in `appsettings.json`, the app
-auto-downloads the model defined in `LocalLLMs:ModelName` to
+**First run only:** If model paths are empty in `appsettings.json`
+(`LocalLLMs:Models:Orchestrator:ModelPath` and `LocalLLMs:Models:ComputerUse:ModelPath`),
+the app auto-downloads configured model IDs to
 `%LOCALAPPDATA%\ElBruno\LocalLLMs\models\` the first time you submit a task. This takes
 a few minutes depending on your connection and model size; progress is logged to the
 Aspire dashboard.
@@ -135,10 +136,10 @@ FileSurfer is sandboxed to `LocalLLMs:WorkingDirectory` (defaults to
 
 ---
 
-## Scenario 3 — Analyse an Image in the Sandbox
+## Scenario 3 — Analyse an Image with Fara Computer-Use
 
-**Goal:** Use `Coder_ExecuteCode` to download and inspect an image with Python, then
-return a concise explanation.
+**Goal:** Use `Coder_ExecuteCode` to download an image, then use
+`Computer_DescribeImage` (Fara model) to analyze it.
 
 ### Steps
 
@@ -146,22 +147,22 @@ return a concise explanation.
 2. In the **task input** box, paste:
    ```
    Use Coder_ExecuteCode to download https://raw.githubusercontent.com/elbruno/ElBruno.MagenticUI/master/images/magentic_releases.png into the working directory as magentic_releases.png.
-   Then read the PNG header in Python (standard library only) and report:
-   - width
-   - height
-   - file size in KB
-   Finally explain in 2 sentences what this image illustrates.
+   Then call Computer_DescribeImage with:
+   - relativePath: magentic_releases.png
+   - prompt: "Summarize what this image shows in 3 bullets and mention any timeline insight."
+   Return only the final answer.
    ```
 3. Click **Start Task**
 4. Watch the feed:
    - 🔵 **Orchestrator** plans the steps
-   - 💻 **Coder** runs Python to download and inspect the image
+   - 💻 **Coder** runs Python to download the image
+   - 🖱️ **Computer** analyzes the image through the Fara computer-use model
    - 🔵 **Orchestrator** formats the findings and submits the answer
 
 ### What to expect
 
-You should get deterministic metadata (width/height/size) plus a short interpretation
-based on the referenced image context.
+You should get a visual summary grounded in the screenshot content, produced by the
+computer-use model instead of manual PNG header parsing.
 
 ---
 

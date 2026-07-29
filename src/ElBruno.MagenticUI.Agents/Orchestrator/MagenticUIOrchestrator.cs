@@ -12,10 +12,12 @@ namespace ElBruno.MagenticUI.Agents.Orchestrator;
 public sealed class MagenticUIOrchestrator
 {
     private const int MaxModelToolResultCharacters = 400;
+    private const int MaxScreenshotBytes = 1_500_000;
     private readonly IChatClient _orchestratorClient;
     private readonly FileSurferTool _fileSurfer;
     private readonly WebFetchTool _webFetcher;
     private readonly CodeExecutorTool _coder;
+    private readonly ComputerUseTool _computerUse;
     private readonly UserProxyAgent _userProxy;
     private readonly int _maxRounds;
     private readonly ILogger<MagenticUIOrchestrator> _logger;
@@ -28,6 +30,7 @@ public sealed class MagenticUIOrchestrator
         FileSurferTool fileSurfer,
         WebFetchTool webFetcher,
         CodeExecutorTool coder,
+        ComputerUseTool computerUse,
         UserProxyAgent userProxy,
         int maxRounds = 15,
         ILogger<MagenticUIOrchestrator>? logger = null)
@@ -36,6 +39,7 @@ public sealed class MagenticUIOrchestrator
         _fileSurfer = fileSurfer;
         _webFetcher = webFetcher;
         _coder = coder;
+        _computerUse = computerUse;
         _userProxy = userProxy;
         _maxRounds = maxRounds;
         _logger = logger ?? NullLogger<MagenticUIOrchestrator>.Instance;
@@ -162,6 +166,7 @@ public sealed class MagenticUIOrchestrator
 
                 Report(progress, "Orchestrator", "tool",
                     $"Calling {call.Name}({FormatArgs(call.Arguments)})", round);
+                ReportComputerAction(progress, call, round);
 
                 var tool = tools.OfType<AIFunction>().FirstOrDefault(function => function.Name == call.Name);
                 object? result;
@@ -189,6 +194,7 @@ public sealed class MagenticUIOrchestrator
                 var resultStr = result?.ToString() ?? string.Empty;
                 Report(progress, DetermineAgentName(call.Name), "tool",
                     resultStr.Length > 2000 ? resultStr[..2000] + "...[truncated]" : resultStr, round);
+                ReportComputerScreenshot(progress, call, round);
 
                 resultContents.Add(new FunctionResultContent(call.CallId, TruncateToolResult(resultStr)));
                 textToolResults.Add((call.Name, TruncateToolResult(resultStr)));
@@ -230,6 +236,9 @@ public sealed class MagenticUIOrchestrator
         AIFunctionFactory.Create(ExecuteCodeDelegate,
             name: "Coder_ExecuteCode",
             description: "Executes Python code via WSL2."),
+        AIFunctionFactory.Create(DescribeImageDelegate,
+            name: "Computer_DescribeImage",
+            description: "Analyzes an image file from the working directory using the computer-use vision model."),
         AIFunctionFactory.Create(RequestClarificationDelegate,
             name: "UserProxy_RequestClarification",
             description: "Request clarification from the human user. Use when the task is ambiguous or needs confirmation."),
@@ -262,6 +271,12 @@ public sealed class MagenticUIOrchestrator
             ? "Code completed with no output. Use print(...) to return computed values; do not repeat assignments without printing."
             : execution.Output;
     }
+
+    [Description("Analyzes a sandboxed image with the computer-use model.")]
+    private Task<string> DescribeImageDelegate(
+        [Description("Relative image path in working directory")] string relativePath,
+        [Description("Question/instruction for the computer-use model")] string prompt = "Describe what is visible in this image.") =>
+        _computerUse.DescribeImage(relativePath, prompt);
 
     [Description("Requests clarification from the user.")]
     private Task<string> RequestClarificationDelegate(
@@ -451,10 +466,158 @@ public sealed class MagenticUIOrchestrator
         int round) =>
         progress.Report(new AgentMessage(agentName, role, text, round, DateTimeOffset.UtcNow));
 
+    private static void ReportComputerAction(
+        IProgress<AgentMessage> progress,
+        FunctionCallContent call,
+        int round)
+    {
+        if (!IsComputerAction(call.Name))
+            return;
+
+        Report(
+            progress,
+            "Computer",
+            "browser_action",
+            $"{call.Name}: {FormatArgs(call.Arguments)}",
+            round);
+    }
+
+    private void ReportComputerScreenshot(
+        IProgress<AgentMessage> progress,
+        FunctionCallContent call,
+        int round)
+    {
+        if (!IsComputerScreenshotAction(call.Name))
+            return;
+        if (!TryGetRelativePath(call.Arguments, out var relativePath))
+            return;
+
+        string fullPath;
+        try
+        {
+            fullPath = _fileSurfer.ResolvePath(relativePath);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (!TryBuildImageDataUri(fullPath, out var dataUri))
+            return;
+
+        Report(progress, "Computer", "browser_screenshot", dataUri, round);
+    }
+
+    internal static bool TryGetRelativePath(
+        IDictionary<string, object?>? args,
+        out string relativePath)
+    {
+        relativePath = string.Empty;
+        if (args is null) return false;
+
+        var keys = new[] { "relativePath", "path", "imagePath", "image_path" };
+        object? value = null;
+        foreach (var key in keys)
+        {
+            if (args.TryGetValue(key, out value) && value is not null)
+                break;
+
+            var found = args.FirstOrDefault(kv =>
+                kv.Value is not null &&
+                kv.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(found.Key))
+            {
+                value = found.Value;
+                break;
+            }
+        }
+
+        if (value is null) return false;
+
+        string? text = value switch
+        {
+            JsonElement { ValueKind: JsonValueKind.String } jsonValue => jsonValue.GetString(),
+            JsonElement jsonValue => jsonValue.ToString(),
+            _ => value.ToString()
+        };
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        text = text.Trim();
+        if (text.Length > 1 && text[0] == '"' && text[^1] == '"')
+        {
+            try
+            {
+                text = JsonSerializer.Deserialize<string>(text);
+            }
+            catch (JsonException)
+            {
+                // Fall back to trimmed raw value.
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        relativePath = text;
+        return true;
+    }
+
+    internal static bool IsComputerAction(string? toolName) =>
+        !string.IsNullOrWhiteSpace(toolName) &&
+        toolName.StartsWith("Computer_", StringComparison.Ordinal);
+
+    internal static bool IsComputerScreenshotAction(string? toolName) =>
+        string.Equals(toolName, "Computer_DescribeImage", StringComparison.Ordinal);
+
+    internal static bool TryBuildImageDataUri(
+        string filePath,
+        out string dataUri)
+    {
+        dataUri = string.Empty;
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            return false;
+
+        FileInfo fileInfo;
+        try
+        {
+            fileInfo = new FileInfo(filePath);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (fileInfo.Length <= 0 || fileInfo.Length > MaxScreenshotBytes)
+            return false;
+
+        var mime = Path.GetExtension(filePath).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            ".gif" => "image/gif",
+            _ => string.Empty
+        };
+
+        if (string.IsNullOrEmpty(mime))
+            return false;
+
+        try
+        {
+            var bytes = File.ReadAllBytes(filePath);
+            dataUri = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string DetermineAgentName(string toolName) =>
         toolName.StartsWith("FileSurfer_", StringComparison.Ordinal) ? "FileSurfer" :
         toolName.StartsWith("WebFetcher_", StringComparison.Ordinal) ? "WebFetcher" :
         toolName.StartsWith("Coder_", StringComparison.Ordinal) ? "Coder" :
+        toolName.StartsWith("Computer_", StringComparison.Ordinal) ? "Computer" :
         toolName.StartsWith("UserProxy_", StringComparison.Ordinal) ? "UserProxy" :
         "Orchestrator";
 

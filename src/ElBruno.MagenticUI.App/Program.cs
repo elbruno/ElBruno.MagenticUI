@@ -14,47 +14,75 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 const string genAiActivitySourceName = "ElBruno.MagenticUI.GenAI";
+const string computerUseActivitySourceName = "ElBruno.MagenticUI.ComputerUse";
 
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing.AddSource(
         genAiActivitySourceName,
+        computerUseActivitySourceName,
         LocalLLMsInstrumentation.ActivitySourceName))
     .WithMetrics(metrics => metrics.AddMeter(LocalLLMsInstrumentation.MeterName));
 
 // ── Local LLM (ONNX via ElBruno.LocalLLMs → IChatClient) ──────────────────
-var localLlmOptions = new LocalLLMsOptions
-{
-    ExecutionProvider = builder.Configuration.GetValue(
-        "LocalLLMs:ExecutionProvider",
-        ExecutionProvider.Cpu),
-    CaptureTelemetryContent = builder.Environment.IsDevelopment()
-};
+var executionProvider = builder.Configuration.GetValue(
+    "LocalLLMs:ExecutionProvider",
+    ExecutionProvider.Cpu);
+var cacheDirectory = builder.Configuration["LocalLLMs:CacheDirectory"];
+var captureTelemetryContent = builder.Environment.IsDevelopment();
 
-var modelPath = builder.Configuration["LocalLLMs:ModelPath"];
-if (!string.IsNullOrWhiteSpace(modelPath))
+LocalLLMsOptions BuildModelOptions(string sectionKey, string fallbackModelPathKey, string fallbackModelNameKey, string defaultModelId)
 {
-    localLlmOptions.ModelPath = modelPath;
-}
-else
-{
-    var modelName = builder.Configuration["LocalLLMs:ModelName"]
-        ?? KnownModels.MagenticBrain.Id;
-    localLlmOptions.Model = KnownModels.FindById(modelName)
-        ?? throw new InvalidOperationException($"Unknown LocalLLMs model '{modelName}'.");
-    localLlmOptions.EnsureModelDownloaded = true;
+    var options = new LocalLLMsOptions
+    {
+        ExecutionProvider = executionProvider,
+        CaptureTelemetryContent = captureTelemetryContent
+    };
 
-    var cacheDirectory = builder.Configuration["LocalLLMs:CacheDirectory"];
-    if (!string.IsNullOrWhiteSpace(cacheDirectory))
-        localLlmOptions.CacheDirectory = cacheDirectory;
+    var modelPath = builder.Configuration[$"{sectionKey}:ModelPath"]
+        ?? builder.Configuration[fallbackModelPathKey];
+    if (!string.IsNullOrWhiteSpace(modelPath))
+    {
+        options.ModelPath = modelPath;
+    }
+    else
+    {
+        var modelName = builder.Configuration[$"{sectionKey}:ModelName"]
+            ?? builder.Configuration[fallbackModelNameKey]
+            ?? defaultModelId;
+        options.Model = KnownModels.FindById(modelName)
+            ?? throw new InvalidOperationException($"Unknown LocalLLMs model '{modelName}'.");
+        options.EnsureModelDownloaded = true;
+
+        if (!string.IsNullOrWhiteSpace(cacheDirectory))
+            options.CacheDirectory = cacheDirectory;
+    }
+
+    return options;
 }
+
+var orchestratorOptions = BuildModelOptions(
+    sectionKey: "LocalLLMs:Models:Orchestrator",
+    fallbackModelPathKey: "LocalLLMs:ModelPath",
+    fallbackModelNameKey: "LocalLLMs:ModelName",
+    defaultModelId: KnownModels.MagenticBrain.Id);
+
+var computerUseOptions = BuildModelOptions(
+    sectionKey: "LocalLLMs:Models:ComputerUse",
+    fallbackModelPathKey: "LocalLLMs:ComputerModelPath",
+    fallbackModelNameKey: "LocalLLMs:ComputerModelName",
+    defaultModelId: KnownModels.Fara15_9B.Id);
 
 builder.Services
     .AddChatClient(sp => new LocalChatClient(
-        localLlmOptions,
+        orchestratorOptions,
         sp.GetRequiredService<ILoggerFactory>()))
     .UseOpenTelemetry(
         sourceName: genAiActivitySourceName,
         configure: telemetry => telemetry.EnableSensitiveData = builder.Environment.IsDevelopment());
+
+builder.Services.AddSingleton(sp => new LocalVisionChatClient(
+    computerUseOptions,
+    sp.GetRequiredService<ILoggerFactory>()));
 
 // ── Tools ─────────────────────────────────────────────────────────────────
 var configuredWorkDir = builder.Configuration["LocalLLMs:WorkingDirectory"];
@@ -71,6 +99,10 @@ builder.Services.AddSingleton<WebFetchTool>(sp =>
         markdownConverter: null));
 
 builder.Services.AddSingleton<CodeExecutorTool>();
+builder.Services.AddSingleton<ComputerUseTool>(sp => new ComputerUseTool(
+    sp.GetRequiredService<LocalVisionChatClient>(),
+    workDir,
+    sp.GetService<ILogger<ComputerUseTool>>()));
 
 // ── Agents + Orchestrator (Scoped per Blazor circuit) ──────────────────────
 builder.Services.AddScoped<UserProxyAgent>();
@@ -79,6 +111,7 @@ builder.Services.AddScoped<MagenticUIOrchestrator>(sp => new MagenticUIOrchestra
     fileSurfer: sp.GetRequiredService<FileSurferTool>(),
     webFetcher: sp.GetRequiredService<WebFetchTool>(),
     coder: sp.GetRequiredService<CodeExecutorTool>(),
+    computerUse: sp.GetRequiredService<ComputerUseTool>(),
     userProxy: sp.GetRequiredService<UserProxyAgent>(),
     maxRounds: builder.Configuration.GetValue("LocalLLMs:MaxRounds", 15),
     logger: sp.GetService<ILogger<MagenticUIOrchestrator>>()));

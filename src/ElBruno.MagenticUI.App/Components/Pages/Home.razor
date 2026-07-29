@@ -23,10 +23,12 @@
             <span>⚙️</span>
             <div>
                 <strong>Auto-download mode enabled.</strong>
-                No <code>LocalLLMs:ModelPath</code> is set, so the app will download
-                <code>@ConfiguredModelName</code> on first task run.<br />
-                For the agent-tuned model, convert <code>microsoft/MagenticBrain</code> to ONNX and set
-                <code>LocalLLMs:ModelPath</code> to that folder.
+                No explicit model paths are set, so the app will download
+                <code>@OrchestratorModelName</code> (orchestrator) and <code>@ComputerModelName</code> (computer-use)
+                on first task runs.<br />
+                For local ONNX folders, configure:
+                <code>LocalLLMs:Models:Orchestrator:ModelPath</code> and
+                <code>LocalLLMs:Models:ComputerUse:ModelPath</code>.
             </div>
         </div>
     }
@@ -110,6 +112,44 @@
             </div>
         </div>
     }
+    @if (latestBrowserScreenshot is not null || browserActions.Count > 0)
+    {
+        <div class="card shadow-sm mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">Computer Agent Live View</span>
+                <span class="badge bg-info text-dark">MVP</span>
+            </div>
+            <div class="card-body browser-live-view">
+                <div class="browser-screenshot-pane">
+                    @if (latestBrowserScreenshot is not null)
+                    {
+                        <img class="browser-screenshot" src="@latestBrowserScreenshot" alt="Computer agent screenshot" />
+                        <small class="text-muted d-block mt-1">Latest captured screenshot from Computer_DescribeImage.</small>
+                    }
+                    else
+                    {
+                        <div class="text-muted fst-italic">No screenshot captured yet.</div>
+                    }
+                </div>
+                <div class="browser-action-pane">
+                    <div class="fw-semibold mb-1">Recent browser actions</div>
+                    @if (browserActions.Count == 0)
+                    {
+                        <div class="text-muted fst-italic">Waiting for computer-agent actions...</div>
+                    }
+                    else
+                    {
+                        <ul class="browser-action-list">
+                            @foreach (var action in browserActions)
+                            {
+                                <li>@action</li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        </div>
+    }
     @if (cachedMessages.Count > 0)
     {
         <div class="card shadow-sm">
@@ -131,7 +171,11 @@
                             <span class="badge bg-light text-dark border ms-1">@msg.Role</span>
                             <small class="text-muted ms-auto">@msg.Timestamp.LocalDateTime.ToString("HH:mm:ss")</small>
                         </div>
-                        @if (msg.Text.Contains('\n') || msg.Role is "tool" or "code_output")
+                        @if (msg.Role == "browser_screenshot")
+                        {
+                            <p class="message-body mb-0 text-muted">Screenshot captured (see "Computer Agent Live View").</p>
+                        }
+                        else if (msg.Text.Contains('\n') || msg.Role is "tool" or "code_output")
                         {
                             <pre class="message-body">@msg.Text</pre>
                         }
@@ -158,6 +202,8 @@
     private string userResponse = string.Empty;
     private string? copiedScenarioTitle;
     private IReadOnlyList<AgentMessage> cachedMessages = [];
+    private string? latestBrowserScreenshot;
+    private IReadOnlyList<string> browserActions = [];
     private ElementReference messageFeedRef;
 
     private sealed record QuickScenario(string Title, string Prompt, string TutorialUrl);
@@ -180,31 +226,41 @@
             """,
             "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial.md#scenario-2--analyse-files-in-a-sandbox-directory"),
         new(
-            "Scenario 3: Analyse an image with Python",
+            "Scenario 3: Analyse an image with Fara computer-use",
             """
             Use Coder_ExecuteCode to download https://raw.githubusercontent.com/elbruno/ElBruno.MagenticUI/master/images/magentic_releases.png into the working directory as magentic_releases.png.
-            Then read the PNG header in Python (standard library only) and report:
-            - width
-            - height
-            - file size in KB
-            Finally explain in 2 sentences what this image illustrates.
+            Then call Computer_DescribeImage with:
+            - relativePath: magentic_releases.png
+            - prompt: "Summarize what this image shows in 3 bullets and mention any timeline insight."
+            Return only the final answer.
             """,
-            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial.md#scenario-3--analyse-an-image-in-the-sandbox")
+            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial.md#scenario-3--analyse-an-image-with-fara-computer-use")
     ];
 
     private const string TaskPlaceholder =
         "Describe what you want the agents to do…\n\nExample: Fetch the latest .NET release notes from the web and summarise them.";
 
     private bool IsAutoDownloadMode =>
-        string.IsNullOrWhiteSpace(Config["LocalLLMs:ModelPath"]);
+        string.IsNullOrWhiteSpace(Config["LocalLLMs:Models:Orchestrator:ModelPath"])
+        && string.IsNullOrWhiteSpace(Config["LocalLLMs:ModelPath"])
+        && string.IsNullOrWhiteSpace(Config["LocalLLMs:Models:ComputerUse:ModelPath"])
+        && string.IsNullOrWhiteSpace(Config["LocalLLMs:ComputerModelPath"]);
 
-    private string ConfiguredModelName =>
-        Config["LocalLLMs:ModelName"] ?? "magentic-brain";
+    private string OrchestratorModelName =>
+        Config["LocalLLMs:Models:Orchestrator:ModelName"]
+        ?? Config["LocalLLMs:ModelName"]
+        ?? "magentic-brain";
+
+    private string ComputerModelName =>
+        Config["LocalLLMs:Models:ComputerUse:ModelName"]
+        ?? Config["LocalLLMs:ComputerModelName"]
+        ?? "fara1.5-9b";
 
     protected override void OnInitialized()
     {
         Session.OnChanged += OnSessionChanged;
         cachedMessages = Session.Messages;
+        RefreshBrowserState();
     }
 
     private string StatusText => Session.Status switch
@@ -268,7 +324,22 @@
     private async Task OnSessionChanged()
     {
         cachedMessages = Session.Messages;
+        RefreshBrowserState();
         await InvokeAsync(StateHasChanged);
+    }
+
+    private void RefreshBrowserState()
+    {
+        latestBrowserScreenshot = cachedMessages
+            .Where(msg => msg.Role == "browser_screenshot")
+            .Select(msg => msg.Text)
+            .LastOrDefault();
+
+        browserActions = cachedMessages
+            .Where(msg => msg.Role == "browser_action")
+            .Select(msg => $"[{msg.Timestamp.LocalDateTime:HH:mm:ss}] {msg.Text}")
+            .TakeLast(12)
+            .ToList();
     }
 
     private static string GetAgentIcon(string agentName) => agentName switch
@@ -277,6 +348,7 @@
         "FileSurfer"   => "📁",
         "WebFetcher"   => "🌐",
         "Coder"        => "💻",
+        "Computer"     => "🖱️",
         "UserProxy"    => "👤",
         _              => "🤖"
     };
@@ -287,6 +359,7 @@
         "FileSurfer"   => "msg-filesurfer",
         "WebFetcher"   => "msg-webfetcher",
         "Coder"        => "msg-coder",
+        "Computer"     => "msg-coder",
         "UserProxy"    => "msg-userproxy",
         _              => "msg-default"
     };

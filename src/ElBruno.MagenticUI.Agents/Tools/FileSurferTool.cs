@@ -51,6 +51,8 @@ public sealed class FileSurferTool
         return string.Join("\n", entries);
     }
 
+    public string ResolvePath(string relativePath) => ResolveSandboxed(relativePath);
+
     private string ResolveSandboxed(string relativePath)
     {
         var fullPath = Path.GetFullPath(Path.Combine(_workingDirectory, relativePath));
