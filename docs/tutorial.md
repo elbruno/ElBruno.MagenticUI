@@ -45,6 +45,26 @@ Aspire dashboard.
 
 ---
 
+## Tasks + Settings pages
+
+Use the left navigation menu:
+
+- **Tasks** — submit prompts, review agent output, and see real-time model download
+  progress while a task is running.
+- **Settings** — manage local model storage and per-role model status.
+
+In **Settings**, each model card shows:
+
+- **Present/Missing** badge for local availability
+- **Download phase** (`Idle`, `Downloading`, `Completed`, `Failed`)
+- **Effective model path** and status text
+- **Open folder** button to open the model location in your OS file explorer
+- **Delete model** button with **Confirm delete** / **Cancel** safety prompt
+
+Delete is blocked while a model is actively downloading.
+
+---
+
 ## Aspire Dashboard
 
 The dashboard at `https://localhost:17175` gives you:
@@ -77,6 +97,11 @@ Use it to inspect what each agent is doing internally while your task runs.
    - 🟣 **Submit** message — task complete
 
 5. The final answer appears in the feed labelled `submit`.
+
+During first-run model fetches, the **Tasks** page also shows:
+
+- active per-model progress bars with file/byte progress
+- short completion/failure notices when downloads finish
 
 ### What to expect
 

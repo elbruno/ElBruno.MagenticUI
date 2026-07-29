@@ -1,0 +1,278 @@
+@page "/settings"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject IModelSettingsService ModelSettings
+@inject IModelDownloadProgressStateService ModelDownloadProgressState
+@using ElBruno.MagenticUI.App.ModelDownloadProgress
+@using ElBruno.MagenticUI.App.ModelSettings
+
+<PageTitle>Settings — Model Management</PageTitle>
+
+<div class="container-fluid py-3 settings-root">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div>
+            <h2 class="mb-1 fw-bold">⚙️ Settings</h2>
+            <p class="text-muted mb-0">Model paths, local presence, and download progress.</p>
+        </div>
+        <span class="badge text-bg-light border px-3 py-2">Models: @modelEntries.Count</span>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(actionMessage))
+    {
+        <div class="alert @actionMessageClass d-flex justify-content-between align-items-start gap-2 py-2">
+            <span>@actionMessage</span>
+            <button type="button" class="btn-close" aria-label="Close" @onclick="ClearActionMessage"></button>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="card shadow-sm">
+            <div class="card-body d-flex align-items-center gap-2">
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                <span>Loading model settings…</span>
+            </div>
+        </div>
+    }
+    else if (modelEntries.Count == 0)
+    {
+        <div class="alert alert-secondary">No model entries were found in the current configuration.</div>
+    }
+    else
+    {
+        <div class="row g-3">
+            @foreach (var entry in modelEntries)
+            {
+                var downloadState = GetDownloadState(entry.Role);
+                <div class="col-12 col-xl-6">
+                    <article class="card shadow-sm h-100 settings-model-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
+                                <div>
+                                    <div class="text-muted small">Role</div>
+                                    <h5 class="mb-0">@entry.RoleDisplayName</h5>
+                                </div>
+                                <div class="d-flex flex-wrap gap-1 justify-content-end">
+                                    <span class="badge @(entry.IsPresent ? "text-bg-success" : "text-bg-warning text-dark")">
+                                        @(entry.IsPresent ? "Present" : "Missing")
+                                    </span>
+                                    <span class="badge @GetDownloadBadgeClass(downloadState.Phase)">
+                                        @GetDownloadPhaseText(downloadState.Phase)
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="small mb-2">
+                                <div><strong>Model:</strong> @entry.ModelName</div>
+                                <div class="text-muted"><code>@entry.ModelId</code></div>
+                            </div>
+
+                            <div class="small mb-2">
+                                <div class="fw-semibold">Effective model path</div>
+                                <code class="settings-model-path">@entry.EffectiveModelPath</code>
+                            </div>
+
+                            <div class="small text-muted mb-2">
+                                @entry.StatusText
+                            </div>
+
+                            <div class="small mb-3">
+                                <div class="fw-semibold">Download status</div>
+                                <div>@GetDownloadStatusText(downloadState)</div>
+                                @if (downloadState.Phase == ModelDownloadPhase.Downloading)
+                                {
+                                    <div class="progress settings-download-progress mt-1" role="progressbar" aria-valuenow="@downloadState.PercentComplete" aria-valuemin="0" aria-valuemax="100">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                             style="width: @($"{downloadState.PercentComplete:0.##}%")"></div>
+                                    </div>
+                                    @if (downloadState.TotalBytes > 0)
+                                    {
+                                        <div class="small text-muted mt-1">
+                                            @FormatBytes(downloadState.DownloadedBytes) / @FormatBytes(downloadState.TotalBytes)
+                                        </div>
+                                    }
+                                }
+                                @if (!string.IsNullOrWhiteSpace(downloadState.Error))
+                                {
+                                    <div class="text-danger small mt-1">Error: @downloadState.Error</div>
+                                }
+                            </div>
+
+                            <div class="d-flex gap-2 flex-wrap">
+                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => OpenModelFolderAsync(entry)">
+                                    Open folder
+                                </button>
+                                @if (pendingDeleteConfirmation.Contains(entry.Role))
+                                {
+                                    <button class="btn btn-danger btn-sm" @onclick="() => ConfirmDeleteModelAsync(entry.Role)">
+                                        Confirm delete
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => CancelDelete(entry.Role)">
+                                        Cancel
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-outline-danger btn-sm"
+                                            disabled="@(downloadState.Phase == ModelDownloadPhase.Downloading)"
+                                            @onclick="() => RequestDelete(entry.Role)">
+                                        Delete model
+                                    </button>
+                                }
+                            </div>
+                            @if (pendingDeleteConfirmation.Contains(entry.Role))
+                            {
+                                <div class="alert alert-warning mt-3 mb-0 py-2">
+                                    Delete all files for <strong>@entry.RoleDisplayName</strong> from
+                                    <code>@entry.EffectiveModelPath</code>?
+                                    This cannot be undone.
+                                </div>
+                            }
+                        </div>
+                    </article>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private readonly Dictionary<ModelRole, ModelDownloadState> downloadStatesByRole = [];
+    private readonly HashSet<ModelRole> pendingDeleteConfirmation = [];
+    private IReadOnlyList<ModelSettingsEntry> modelEntries = [];
+    private bool isLoading = true;
+    private string? actionMessage;
+    private string actionMessageClass = "alert-info";
+
+    protected override async Task OnInitializedAsync()
+    {
+        ModelDownloadProgressState.OnChanged += OnDownloadStateChangedAsync;
+        await RefreshModelDataAsync();
+        isLoading = false;
+    }
+
+    private async Task OnDownloadStateChangedAsync()
+    {
+        RefreshDownloadStates();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OpenModelFolderAsync(ModelSettingsEntry entry)
+    {
+        var result = ModelSettings.OpenModelFolder(entry.Role);
+        SetActionMessage(result);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearActionMessage()
+        => actionMessage = null;
+
+    private void RequestDelete(ModelRole role)
+    {
+        pendingDeleteConfirmation.Clear();
+        pendingDeleteConfirmation.Add(role);
+        actionMessageClass = "alert-warning";
+        actionMessage = "Please confirm model deletion.";
+    }
+
+    private void CancelDelete(ModelRole role)
+    {
+        pendingDeleteConfirmation.Remove(role);
+        actionMessageClass = "alert-secondary";
+        actionMessage = "Delete cancelled.";
+    }
+
+    private async Task ConfirmDeleteModelAsync(ModelRole role)
+    {
+        var result = ModelSettings.DeleteModelFiles(role, isConfirmed: true);
+        pendingDeleteConfirmation.Remove(role);
+        await RefreshModelDataAsync();
+        SetActionMessage(result);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task RefreshModelDataAsync()
+    {
+        modelEntries = ModelSettings.GetModelEntries();
+        RefreshDownloadStates();
+        return Task.CompletedTask;
+    }
+
+    private void RefreshDownloadStates()
+    {
+        var states = ModelDownloadProgressState.GetStates()
+            .ToDictionary(state => state.Role, state => state);
+
+        foreach (var entry in modelEntries)
+        {
+            if (!states.ContainsKey(entry.Role))
+                states[entry.Role] = ModelDownloadProgressState.GetState(entry.Role);
+        }
+
+        downloadStatesByRole.Clear();
+        foreach (var pair in states)
+            downloadStatesByRole[pair.Key] = pair.Value;
+    }
+
+    private ModelDownloadState GetDownloadState(ModelRole role)
+        => downloadStatesByRole.TryGetValue(role, out var state)
+            ? state
+            : ModelDownloadProgressState.GetState(role);
+
+    private static string GetDownloadBadgeClass(ModelDownloadPhase phase)
+        => phase switch
+        {
+            ModelDownloadPhase.Downloading => "text-bg-primary",
+            ModelDownloadPhase.Completed => "text-bg-success",
+            ModelDownloadPhase.Failed => "text-bg-danger",
+            _ => "text-bg-secondary"
+        };
+
+    private static string GetDownloadPhaseText(ModelDownloadPhase phase)
+        => phase switch
+        {
+            ModelDownloadPhase.Downloading => "Downloading",
+            ModelDownloadPhase.Completed => "Completed",
+            ModelDownloadPhase.Failed => "Failed",
+            _ => "Idle"
+        };
+
+    private static string GetDownloadStatusText(ModelDownloadState state)
+    {
+        if (state.Phase == ModelDownloadPhase.Downloading && !string.IsNullOrWhiteSpace(state.CurrentFileName))
+            return $"{state.StatusText} · {state.CurrentFileName}";
+
+        if (state.Phase == ModelDownloadPhase.Idle)
+            return "No active download for this model.";
+
+        return state.StatusText;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        var value = Math.Max(0, bytes);
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var unitIndex = 0;
+        double size = value;
+
+        while (size >= 1024d && unitIndex < units.Length - 1)
+        {
+            size /= 1024d;
+            unitIndex++;
+        }
+
+        return $"{size:0.##} {units[unitIndex]}";
+    }
+
+    private void SetActionMessage(ModelFileOperationResult result)
+    {
+        actionMessageClass = result.Succeeded ? "alert-success" : "alert-danger";
+        actionMessage = result.Message;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        ModelDownloadProgressState.OnChanged -= OnDownloadStateChangedAsync;
+        return ValueTask.CompletedTask;
+    }
+}

@@ -4,6 +4,9 @@ using ElBruno.MagenticUI.Agents.Agents;
 using ElBruno.MagenticUI.Agents.Orchestrator;
 using ElBruno.MagenticUI.Agents.Tools;
 using ElBruno.MagenticUI.App;
+using ElBruno.MagenticUI.App.LocalLlm;
+using ElBruno.MagenticUI.App.ModelDownloadProgress;
+using ElBruno.MagenticUI.App.ModelSettings;
 using ElBruno.MagenticUI.App.Components;
 using Microsoft.Extensions.AI;
 using OpenTelemetry.Metrics;
@@ -24,65 +27,19 @@ builder.Services.AddOpenTelemetry()
     .WithMetrics(metrics => metrics.AddMeter(LocalLLMsInstrumentation.MeterName));
 
 // ── Local LLM (ONNX via ElBruno.LocalLLMs → IChatClient) ──────────────────
-var executionProvider = builder.Configuration.GetValue(
-    "LocalLLMs:ExecutionProvider",
-    ExecutionProvider.Cpu);
-var cacheDirectory = builder.Configuration["LocalLLMs:CacheDirectory"];
-var captureTelemetryContent = builder.Environment.IsDevelopment();
-
-LocalLLMsOptions BuildModelOptions(string sectionKey, string fallbackModelPathKey, string fallbackModelNameKey, string defaultModelId)
-{
-    var options = new LocalLLMsOptions
-    {
-        ExecutionProvider = executionProvider,
-        CaptureTelemetryContent = captureTelemetryContent
-    };
-
-    var modelPath = builder.Configuration[$"{sectionKey}:ModelPath"]
-        ?? builder.Configuration[fallbackModelPathKey];
-    if (!string.IsNullOrWhiteSpace(modelPath))
-    {
-        options.ModelPath = modelPath;
-    }
-    else
-    {
-        var modelName = builder.Configuration[$"{sectionKey}:ModelName"]
-            ?? builder.Configuration[fallbackModelNameKey]
-            ?? defaultModelId;
-        options.Model = KnownModels.FindById(modelName)
-            ?? throw new InvalidOperationException($"Unknown LocalLLMs model '{modelName}'.");
-        options.EnsureModelDownloaded = true;
-
-        if (!string.IsNullOrWhiteSpace(cacheDirectory))
-            options.CacheDirectory = cacheDirectory;
-    }
-
-    return options;
-}
-
-var orchestratorOptions = BuildModelOptions(
-    sectionKey: "LocalLLMs:Models:Orchestrator",
-    fallbackModelPathKey: "LocalLLMs:ModelPath",
-    fallbackModelNameKey: "LocalLLMs:ModelName",
-    defaultModelId: KnownModels.MagenticBrain.Id);
-
-var computerUseOptions = BuildModelOptions(
-    sectionKey: "LocalLLMs:Models:ComputerUse",
-    fallbackModelPathKey: "LocalLLMs:ComputerModelPath",
-    fallbackModelNameKey: "LocalLLMs:ComputerModelName",
-    defaultModelId: KnownModels.Fara15_9B.Id);
+builder.Services.AddSingleton<IPathSafetyService, PathSafetyService>();
+builder.Services.AddSingleton<IModelFolderLauncher, ModelFolderLauncher>();
+builder.Services.AddSingleton<IModelSettingsService, ModelSettingsService>();
+builder.Services.AddSingleton<IModelDownloadProgressStateService, ModelDownloadProgressStateService>();
+builder.Services.AddSingleton<ILocalLlmClientFactory, LocalLlmClientFactory>();
 
 builder.Services
-    .AddChatClient(sp => new LocalChatClient(
-        orchestratorOptions,
-        sp.GetRequiredService<ILoggerFactory>()))
+    .AddChatClient(sp => sp.GetRequiredService<ILocalLlmClientFactory>().CreateOrchestratorChatClient())
     .UseOpenTelemetry(
         sourceName: genAiActivitySourceName,
         configure: telemetry => telemetry.EnableSensitiveData = builder.Environment.IsDevelopment());
 
-builder.Services.AddSingleton(sp => new LocalVisionChatClient(
-    computerUseOptions,
-    sp.GetRequiredService<ILoggerFactory>()));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<ILocalLlmClientFactory>().CreateComputerUseChatClient());
 
 // ── Tools ─────────────────────────────────────────────────────────────────
 var configuredWorkDir = builder.Configuration["LocalLLMs:WorkingDirectory"];

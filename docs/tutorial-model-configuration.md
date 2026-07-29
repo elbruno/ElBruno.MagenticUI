@@ -1,5 +1,15 @@
 # ElBruno.MagenticUI — Configuring a Different Model
 
+The app now includes a **Settings** page (`/settings`) focused on model management:
+
+1. Verify each role (`Orchestrator`, `ComputerUse`) has the expected model and path.
+2. Check if the model is downloaded (`Present`) or missing.
+3. Track real-time download state (`Idle`, `Downloading`, `Completed`, `Failed`).
+4. Use **Open folder** to open the local model location.
+5. Use **Delete model** for per-model cleanup, then **Confirm delete** when prompted.
+
+> Deletion is intentionally blocked while a model download is in progress.
+
 Edit `src/ElBruno.MagenticUI.App/appsettings.json`:
 
 ```json
@@ -35,3 +45,11 @@ depending on your scenario. After changing model settings, restart Aspire:
 aspire stop
 aspire start
 ```
+
+## How to check downloaded models
+
+- Open **Settings** and look for the **Present** badge per role.
+- Review the **Effective model path** and click **Open folder** to inspect files.
+- While a download is running, you can watch progress in both:
+  - **Settings** (per-card download status/progress)
+  - **Tasks** (live top-panel progress while executing tasks)

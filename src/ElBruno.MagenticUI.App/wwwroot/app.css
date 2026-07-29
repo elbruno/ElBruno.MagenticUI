@@ -137,6 +137,43 @@ h1:focus {
     flex-shrink: 0;
 }
 
+.model-download-card {
+    border-left: 4px solid #0d6efd;
+}
+
+.model-download-row {
+    padding: 0.35rem 0;
+}
+
+.model-download-row + .model-download-row {
+    border-top: 1px dashed #e9ecef;
+}
+
+.model-download-title {
+    font-size: 0.88rem;
+}
+
+.model-download-percent {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #0d6efd;
+}
+
+.model-download-progress {
+    height: 0.42rem;
+    margin-top: 0.35rem;
+    margin-bottom: 0.35rem;
+}
+
+.model-download-meta {
+    font-size: 0.78rem;
+    line-height: 1.25;
+}
+
+.model-download-notices {
+    margin-top: -0.25rem;
+}
+
 .browser-live-view {
     display: grid;
     grid-template-columns: minmax(280px, 1fr) minmax(240px, 360px);
@@ -168,4 +205,26 @@ h1:focus {
     margin: 0;
     padding-left: 1rem;
     font-size: 0.9rem;
+}
+
+/* ── Settings page ───────────────────────────────────────────────────────── */
+
+.settings-model-card {
+    border-left: 4px solid #6f42c1;
+}
+
+.settings-model-path {
+    display: block;
+    padding: 0.45rem 0.55rem;
+    margin-top: 0.25rem;
+    border-radius: 0.35rem;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    color: #3f3f46;
+    font-size: 0.78rem;
+    word-break: break-all;
+}
+
+.settings-download-progress {
+    height: 0.42rem;
 }

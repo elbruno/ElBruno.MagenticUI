@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\ElBruno.MagenticUI.Agents\ElBruno.MagenticUI.Agents.csproj" />
+    <ProjectReference Include="..\..\ElBruno.MagenticUI.App\ElBruno.MagenticUI.App.csproj" />
   </ItemGroup>
 
   <ItemGroup>
