@@ -5,8 +5,9 @@ The app now includes a **Settings** page (`/settings`) focused on model manageme
 1. Verify each role (`Orchestrator`, `ComputerUse`) has the expected model and path.
 2. Check if the model is downloaded (`Present`) or missing.
 3. Track real-time download state (`Idle`, `Downloading`, `Completed`, `Failed`).
-4. Use **Open folder** to open the local model location.
-5. Use **Delete model** for per-model cleanup, then **Confirm delete** when prompted.
+4. Use **Download model** to fetch a missing model immediately (without starting a task).
+5. Use **Open folder** to open the local model location.
+6. Use **Delete model** for per-model cleanup, then **Confirm delete** when prompted.
 
 > Deletion is intentionally blocked while a model download is in progress.
 

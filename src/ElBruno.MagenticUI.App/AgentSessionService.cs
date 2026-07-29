@@ -1,6 +1,7 @@
 using ElBruno.MagenticUI.Agents.Agents;
 using ElBruno.MagenticUI.Agents.Models;
 using ElBruno.MagenticUI.Agents.Orchestrator;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ElBruno.MagenticUI.App;
 
@@ -8,8 +9,9 @@ public enum AgentTaskStatus { Idle, Running, WaitingForInput, Done, Error }
 
 public sealed class AgentSessionService : IAsyncDisposable
 {
-    private readonly MagenticUIOrchestrator _orchestrator;
-    private readonly UserProxyAgent _userProxy;
+    private readonly IServiceProvider _serviceProvider;
+    private MagenticUIOrchestrator? _orchestrator;
+    private UserProxyAgent? _userProxy;
 
     private readonly List<AgentMessage> _messages = [];
     private readonly object _messagesLock = new();
@@ -26,10 +28,9 @@ public sealed class AgentSessionService : IAsyncDisposable
 
     public event Func<Task>? OnChanged;
 
-    public AgentSessionService(MagenticUIOrchestrator orchestrator, UserProxyAgent userProxy)
+    public AgentSessionService(IServiceProvider serviceProvider)
     {
-        _orchestrator = orchestrator;
-        _userProxy = userProxy;
+        _serviceProvider = serviceProvider;
     }
 
     public Task StartTaskAsync(string prompt, string? workingDir = null)
@@ -61,7 +62,9 @@ public sealed class AgentSessionService : IAsyncDisposable
         {
             try
             {
-                await _orchestrator.RunAsync(request, progress, ct);
+                var orchestrator = _orchestrator ??= _serviceProvider.GetRequiredService<MagenticUIOrchestrator>();
+                _userProxy ??= _serviceProvider.GetRequiredService<UserProxyAgent>();
+                await orchestrator.RunAsync(request, progress, ct);
                 Status = AgentTaskStatus.Done;
             }
             catch (OperationCanceledException)
@@ -88,7 +91,7 @@ public sealed class AgentSessionService : IAsyncDisposable
         if (Status != AgentTaskStatus.WaitingForInput) return Task.CompletedTask;
         Status = AgentTaskStatus.Running;
         PendingQuestion = null;
-        _userProxy.SetResponse(response);
+        _userProxy?.SetResponse(response);
         return NotifyChanged();
     }
 

@@ -57,6 +57,7 @@ In **Settings**, each model card shows:
 
 - **Present/Missing** badge for local availability
 - **Download phase** (`Idle`, `Downloading`, `Completed`, `Failed`)
+- **Download model** button to fetch missing models immediately
 - **Effective model path** and status text
 - **Open folder** button to open the model location in your OS file explorer
 - **Delete model** button with **Confirm delete** / **Cancel** safety prompt

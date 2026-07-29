@@ -3,6 +3,7 @@ using ElBruno.MagenticUI.App.ModelDownloadProgress;
 using ElBruno.MagenticUI.App.ModelSettings;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace ElBruno.MagenticUI.Agents.Tests;
 
@@ -78,6 +79,38 @@ public sealed class ModelSettingsServiceResolutionTests
         Assert.Contains("outside allowed roots", statusText, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void GetModelEntry_UsesNonEmptyDefaultCacheDirectory_WhenCacheConfigIsBlank()
+    {
+        // Arrange
+        var settings = new Dictionary<string, string?>
+        {
+            ["LocalLLMs:CacheDirectory"] = string.Empty,
+            ["LocalLLMs:Models:Orchestrator:ModelPath"] = string.Empty,
+            ["LocalLLMs:Models:Orchestrator:ModelName"] = KnownModels.MagenticBrain.Id,
+            ["LocalLLMs:Models:ComputerUse:ModelPath"] = string.Empty,
+            ["LocalLLMs:Models:ComputerUse:ModelName"] = KnownModels.Fara15_9B.Id
+        };
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(settings)
+            .Build();
+
+        var service = new ModelSettingsService(
+            configuration,
+            new TestHostEnvironment(),
+            new PathSafetyService(),
+            new ModelDownloadProgressStateService(),
+            new TestModelFolderLauncher(),
+            LoggerFactory.Create(_ => { }));
+
+        // Act
+        var entry = service.GetModelEntry(ModelRole.Orchestrator);
+
+        // Assert
+        Assert.False(string.IsNullOrWhiteSpace(entry.CacheDirectory));
+        Assert.True(Path.IsPathRooted(entry.CacheDirectory));
+    }
+
     private static TestContext CreateContext(
         string cacheDirectory,
         string? roleSectionModelPath,
@@ -105,7 +138,8 @@ public sealed class ModelSettingsServiceResolutionTests
             new TestHostEnvironment(),
             new PathSafetyService(),
             new ModelDownloadProgressStateService(),
-            new TestModelFolderLauncher());
+            new TestModelFolderLauncher(),
+            LoggerFactory.Create(_ => { }));
 
         return new TestContext(service, [cacheDirectory, ..additionalCleanupPaths]);
     }

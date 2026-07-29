@@ -2,6 +2,7 @@ using ElBruno.MagenticUI.App.ModelDownloadProgress;
 using ElBruno.MagenticUI.App.ModelSettings;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace ElBruno.MagenticUI.Agents.Tests;
 
@@ -128,6 +129,39 @@ public sealed class ModelSettingsServiceFileOperationsTests
         Assert.True(Directory.Exists(computerPath));
     }
 
+    [Fact]
+    public async Task DownloadModelAsync_ReturnsError_WhenExplicitPathIsConfigured()
+    {
+        // Arrange
+        var cacheRoot = CreateDirectoryPath("cache");
+        var orchestratorPath = Path.Combine(cacheRoot, "orchestrator-model");
+        using var context = CreateContext(cacheRoot, orchestratorPath);
+
+        // Act
+        var result = await context.Service.DownloadModelAsync(ModelRole.Orchestrator);
+
+        // Assert
+        Assert.False(result.Succeeded);
+        Assert.Contains("explicit model path", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DownloadModelAsync_ReturnsSuccess_WhenModelIsAlreadyPresent()
+    {
+        // Arrange
+        var cacheRoot = CreateDirectoryPath("cache");
+        var orchestratorPath = Path.Combine(cacheRoot, "orchestrator-model");
+        Directory.CreateDirectory(orchestratorPath);
+        using var context = CreateContext(cacheRoot, orchestratorPath);
+
+        // Act
+        var result = await context.Service.DownloadModelAsync(ModelRole.Orchestrator);
+
+        // Assert
+        Assert.True(result.Succeeded);
+        Assert.Contains("already present", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static TestContext CreateContext(string cacheDirectory, string orchestratorPath, string? computerUsePath = null)
         => CreateContext(cacheDirectory, orchestratorPath, new TestModelFolderLauncher(shouldSucceed: true), computerUsePath);
 
@@ -153,7 +187,8 @@ public sealed class ModelSettingsServiceFileOperationsTests
             new TestHostEnvironment(),
             new PathSafetyService(),
             downloadService,
-            launcher);
+            launcher,
+            LoggerFactory.Create(_ => { }));
 
         return new TestContext(service, downloadService, launcher, cacheDirectory);
     }

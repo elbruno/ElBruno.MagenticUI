@@ -10,5 +10,6 @@ public interface IModelSettingsService
     IReadOnlyList<string> GetModelStorageRoots();
     bool TryResolveSafeModelPath(string path, out string normalizedPath, out string statusText);
     ModelFileOperationResult OpenModelFolder(ModelRole role);
+    Task<ModelFileOperationResult> DownloadModelAsync(ModelRole role, CancellationToken cancellationToken = default);
     ModelFileOperationResult DeleteModelFiles(ModelRole role, bool isConfirmed);
 }

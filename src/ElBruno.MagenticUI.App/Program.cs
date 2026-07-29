@@ -30,6 +30,7 @@ builder.Services.AddOpenTelemetry()
 builder.Services.AddSingleton<IPathSafetyService, PathSafetyService>();
 builder.Services.AddSingleton<IModelFolderLauncher, ModelFolderLauncher>();
 builder.Services.AddSingleton<IModelSettingsService, ModelSettingsService>();
+builder.Services.AddSingleton<IModelStatusService, ModelStatusService>();
 builder.Services.AddSingleton<IModelDownloadProgressStateService, ModelDownloadProgressStateService>();
 builder.Services.AddSingleton<ILocalLlmClientFactory, LocalLlmClientFactory>();
 

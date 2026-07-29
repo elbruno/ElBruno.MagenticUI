@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @implements IAsyncDisposable
 @inject AgentSessionService Session
+@inject IModelStatusService ModelStatus
 @inject IModelDownloadProgressStateService ModelDownloadProgressState
 @inject IConfiguration Config
 @inject IJSRuntime JS
@@ -22,18 +23,23 @@
     </div>
     @if (IsAutoDownloadMode)
     {
-        <div class="alert alert-info d-flex align-items-start gap-2">
-            <span>⚙️</span>
-            <div>
-                <strong>Auto-download mode enabled.</strong>
-                No explicit model paths are set, so the app will download
-                <code>@OrchestratorModelName</code> (orchestrator) and <code>@ComputerModelName</code> (computer-use)
-                on first task runs.<br />
-                For local ONNX folders, configure:
-                <code>LocalLLMs:Models:Orchestrator:ModelPath</code> and
-                <code>LocalLLMs:Models:ComputerUse:ModelPath</code>.
+        <details class="mb-3 collapsible-panel">
+            <summary class="collapsible-summary">
+                ⚙️ Auto-download model info
+            </summary>
+            <div class="alert alert-info d-flex align-items-start gap-2 mb-0">
+                <span>⚙️</span>
+                <div>
+                    <strong>Auto-download mode enabled.</strong>
+                    No explicit model paths are set, so the app will download
+                    <code>@OrchestratorModelName</code> (orchestrator) and <code>@ComputerModelName</code> (computer-use)
+                    on first task runs.<br />
+                    For local ONNX folders, configure:
+                    <code>LocalLLMs:Models:Orchestrator:ModelPath</code> and
+                    <code>LocalLLMs:Models:ComputerUse:ModelPath</code>.
+                </div>
             </div>
-        </div>
+        </details>
     }
     @if (Session.Status is AgentTaskStatus.Error && Session.LastError is not null)
     {
@@ -41,26 +47,33 @@
             <strong>⚠️ Error:</strong> @Session.LastError
         </div>
     }
-    @if (ActiveDownloads.Count > 0)
-    {
-        <div class="card mb-3 shadow-sm model-download-card">
+    <details class="mb-3 collapsible-panel">
+        <summary class="collapsible-summary">
+            📦 Model download status (@DisplayModelStatuses.Count models)
+        </summary>
+        <div class="card shadow-sm model-download-card mb-0">
             <div class="card-body py-2 px-3">
-                @foreach (var download in ActiveDownloads)
+                @foreach (var modelStatus in DisplayModelStatuses)
                 {
+                    var download = modelStatus.DownloadState;
+                    var percent = modelStatus.DisplayPercent;
                     <div class="model-download-row">
                         <div class="d-flex justify-content-between align-items-center gap-2">
                             <div class="model-download-title">
-                                <span class="badge text-bg-light border">@GetRoleLabel(download.Role)</span>
-                                <strong class="ms-2">@GetModelLabel(download)</strong>
+                                <span class="badge text-bg-light border">@GetRoleLabel(modelStatus.Entry.Role)</span>
+                                <strong class="ms-2">@GetModelLabel(modelStatus)</strong>
+                                <span class="badge ms-2 @GetDownloadPhaseBadgeClass(modelStatus.EffectivePhase)">
+                                    @GetDownloadPhaseText(modelStatus.EffectivePhase)
+                                </span>
                             </div>
-                            <span class="model-download-percent">@download.PercentComplete.ToString("0.##")%</span>
+                            <span class="model-download-percent">@percent.ToString("0.##")%</span>
                         </div>
-                        <div class="progress model-download-progress" role="progressbar" aria-valuenow="@download.PercentComplete" aria-valuemin="0" aria-valuemax="100">
-                            <div class="progress-bar progress-bar-striped progress-bar-animated"
-                                 style="width: @($"{download.PercentComplete:0.##}%")"></div>
+                        <div class="progress model-download-progress" role="progressbar" aria-valuenow="@percent" aria-valuemin="0" aria-valuemax="100">
+                            <div class="progress-bar @(modelStatus.EffectivePhase == ModelDownloadPhase.Downloading ? "progress-bar-striped progress-bar-animated" : string.Empty)"
+                                 style="width: @($"{percent:0.##}%")"></div>
                         </div>
                         <div class="model-download-meta text-muted">
-                            <span>@GetDownloadStatusText(download)</span>
+                            <span>@modelStatus.StatusText</span>
                             @if (download.TotalBytes > 0)
                             {
                                 <span>· @FormatBytes(download.DownloadedBytes) / @FormatBytes(download.TotalBytes)</span>
@@ -70,16 +83,16 @@
                 }
             </div>
         </div>
-    }
+    </details>
     @if (RecentDownloadNotices.Count > 0)
     {
         <div class="model-download-notices mb-2">
             @foreach (var notice in RecentDownloadNotices)
             {
-                <div class="small @(notice.Phase == ModelDownloadPhase.Failed ? "text-danger" : "text-success")">
-                    @(notice.Phase == ModelDownloadPhase.Failed ? "⚠" : "✓")
-                    @GetRoleLabel(notice.Role) model @GetModelLabel(notice)
-                    @(notice.Phase == ModelDownloadPhase.Failed ? $" failed: {notice.Error ?? notice.StatusText}" : " is ready.")
+                <div class="small @(notice.DownloadState.Phase == ModelDownloadPhase.Failed ? "text-danger" : "text-success")">
+                    @(notice.DownloadState.Phase == ModelDownloadPhase.Failed ? "⚠" : "✓")
+                    @GetRoleLabel(notice.Entry.Role) model @GetModelLabel(notice)
+                    @(notice.DownloadState.Phase == ModelDownloadPhase.Failed ? $" failed: {notice.DownloadState.Error ?? notice.StatusText}" : " is ready.")
                 </div>
             }
         </div>
@@ -128,10 +141,20 @@
             </div>
         </div>
     }
+    @if (!string.IsNullOrWhiteSpace(currentTaskPrompt))
+    {
+        <div class="card mb-3 shadow-sm">
+            <div class="card-header fw-semibold">Current task</div>
+            <div class="card-body py-2">
+                <div class="small text-muted mb-1">Started: @currentTaskStartedAt?.LocalDateTime.ToString("HH:mm:ss") · Status: @StatusText</div>
+                <pre class="message-body mb-0">@currentTaskPrompt</pre>
+            </div>
+        </div>
+    }
     @if (Session.Status is AgentTaskStatus.Running or AgentTaskStatus.WaitingForInput)
     {
         <div class="mb-3">
-            <button class="btn btn-outline-danger btn-sm" @onclick="Session.CancelTask">
+            <button class="btn btn-outline-danger btn-sm" @onclick="CancelTaskFromUi">
                 ✕ Cancel Task
             </button>
         </div>
@@ -196,7 +219,25 @@
             </div>
         </div>
     }
-    @if (cachedMessages.Count > 0)
+    <div class="card shadow-sm mb-3">
+        <div class="card-header fw-semibold">Live activity log</div>
+        <div class="card-body py-2">
+            @if (activityLog.Count == 0)
+            {
+                <div class="text-muted small">No activity yet.</div>
+            }
+            else
+            {
+                <ul class="activity-log-list mb-0">
+                    @foreach (var line in activityLog)
+                    {
+                        <li>@line</li>
+                    }
+                </ul>
+            }
+        </div>
+    </div>
+    @if (cachedMessages.Count > 0 || Session.Status is AgentTaskStatus.Running or AgentTaskStatus.WaitingForInput)
     {
         <div class="card shadow-sm">
             <div class="card-header d-flex justify-content-between align-items-center">
@@ -204,6 +245,12 @@
                 <span class="badge bg-secondary">@cachedMessages.Count</span>
             </div>
             <div class="card-body p-2 message-feed" @ref="messageFeedRef">
+                @if (cachedMessages.Count == 0 && Session.Status is AgentTaskStatus.Running or AgentTaskStatus.WaitingForInput)
+                {
+                    <div class="message-row msg-default">
+                        <span class="text-muted fst-italic">No agent messages yet. The orchestrator is preparing the run.</span>
+                    </div>
+                }
                 @foreach (var msg in cachedMessages)
                 {
                     <div class="message-row @GetMessageClass(msg.AgentName)">
@@ -246,11 +293,15 @@
 @code {
     private string taskInput = string.Empty;
     private string userResponse = string.Empty;
+    private string? currentTaskPrompt;
+    private DateTimeOffset? currentTaskStartedAt;
     private string? copiedScenarioTitle;
     private IReadOnlyList<AgentMessage> cachedMessages = [];
-    private IReadOnlyList<ModelDownloadState> modelDownloads = [];
+    private IReadOnlyList<ModelStatusSnapshot> modelStatuses = [];
     private string? latestBrowserScreenshot;
     private IReadOnlyList<string> browserActions = [];
+    private readonly List<string> activityLog = [];
+    private AgentTaskStatus? previousStatus;
     private ElementReference messageFeedRef;
     private static readonly TimeSpan DownloadNoticeWindow = TimeSpan.FromSeconds(20);
 
@@ -304,18 +355,17 @@
         ?? Config["LocalLLMs:ComputerModelName"]
         ?? "fara1.5-9b";
 
-    private IReadOnlyList<ModelDownloadState> ActiveDownloads =>
-        modelDownloads
-            .Where(state => state.Phase == ModelDownloadPhase.Downloading)
-            .OrderBy(state => state.Role)
+    private IReadOnlyList<ModelStatusSnapshot> DisplayModelStatuses =>
+        modelStatuses
+            .OrderBy(status => status.Entry.Role)
             .ToArray();
 
-    private IReadOnlyList<ModelDownloadState> RecentDownloadNotices =>
-        modelDownloads
-            .Where(state =>
-                state.Phase is ModelDownloadPhase.Completed or ModelDownloadPhase.Failed
-                && DateTimeOffset.UtcNow - state.LastUpdated <= DownloadNoticeWindow)
-            .OrderByDescending(state => state.LastUpdated)
+    private IReadOnlyList<ModelStatusSnapshot> RecentDownloadNotices =>
+        modelStatuses
+            .Where(status =>
+                status.DownloadState.Phase is ModelDownloadPhase.Completed or ModelDownloadPhase.Failed
+                && DateTimeOffset.UtcNow - status.DownloadState.LastUpdated <= DownloadNoticeWindow)
+            .OrderByDescending(status => status.DownloadState.LastUpdated)
             .ToArray();
 
     protected override void OnInitialized()
@@ -323,7 +373,8 @@
         Session.OnChanged += OnSessionChanged;
         ModelDownloadProgressState.OnChanged += OnModelDownloadChanged;
         cachedMessages = Session.Messages;
-        modelDownloads = ModelDownloadProgressState.GetStates();
+        previousStatus = Session.Status;
+        RefreshModelStatuses();
         RefreshBrowserState();
     }
 
@@ -339,7 +390,7 @@
 
     private string StatusBadgeClass => Session.Status switch
     {
-        AgentTaskStatus.Running        => "bg-primary",
+        AgentTaskStatus.Running        => "bg-primary status-running",
         AgentTaskStatus.WaitingForInput => "bg-warning text-dark",
         AgentTaskStatus.Done           => "bg-success",
         AgentTaskStatus.Error          => "bg-danger",
@@ -349,7 +400,12 @@
     private async Task StartTask()
     {
         if (!string.IsNullOrWhiteSpace(taskInput))
+        {
+            currentTaskPrompt = taskInput.Trim();
+            currentTaskStartedAt = DateTimeOffset.UtcNow;
+            AppendActivity($"Task started: {currentTaskPrompt}");
             await Session.StartTaskAsync(taskInput.Trim());
+        }
     }
 
     private void UseQuickScenario(string prompt)
@@ -368,6 +424,7 @@
     {
         if (!string.IsNullOrWhiteSpace(userResponse))
         {
+            AppendActivity($"User response sent: {userResponse.Trim()}");
             await Session.RespondToInputAsync(userResponse.Trim());
             userResponse = string.Empty;
         }
@@ -387,7 +444,19 @@
 
     private async Task OnSessionChanged()
     {
+        if (previousStatus != Session.Status)
+        {
+            AppendActivity($"Status changed: {previousStatus?.ToString() ?? "Unknown"} → {Session.Status}");
+            previousStatus = Session.Status;
+        }
+
+        var previousCount = cachedMessages.Count;
         cachedMessages = Session.Messages;
+        if (cachedMessages.Count > previousCount)
+        {
+            foreach (var newMessage in cachedMessages.Skip(previousCount))
+                AppendActivity($"{newMessage.AgentName}/{newMessage.Role}: {Summarize(newMessage.Text)}");
+        }
         RefreshBrowserState();
         await InvokeAsync(StateHasChanged);
     }
@@ -435,13 +504,28 @@
         _ => role.ToString()
     };
 
-    private static string GetModelLabel(ModelDownloadState state)
-        => string.IsNullOrWhiteSpace(state.ModelId) ? "model" : state.ModelId;
+    private static string GetModelLabel(ModelStatusSnapshot status)
+        => status.Entry.IsPresent
+            ? status.Entry.ModelId
+            : "Not downloaded yet";
 
-    private static string GetDownloadStatusText(ModelDownloadState state)
-        => string.IsNullOrWhiteSpace(state.CurrentFileName)
-            ? state.StatusText
-            : $"{state.StatusText} · {state.CurrentFileName}";
+    private static string GetDownloadPhaseText(ModelDownloadPhase phase)
+        => phase switch
+        {
+            ModelDownloadPhase.Downloading => "Downloading",
+            ModelDownloadPhase.Completed => "Completed",
+            ModelDownloadPhase.Failed => "Failed",
+            _ => "Idle"
+        };
+
+    private static string GetDownloadPhaseBadgeClass(ModelDownloadPhase phase)
+        => phase switch
+        {
+            ModelDownloadPhase.Downloading => "text-bg-primary",
+            ModelDownloadPhase.Completed => "text-bg-success",
+            ModelDownloadPhase.Failed => "text-bg-danger",
+            _ => "text-bg-secondary"
+        };
 
     private static string FormatBytes(long bytes)
     {
@@ -461,8 +545,35 @@
 
     private async Task OnModelDownloadChanged()
     {
-        modelDownloads = ModelDownloadProgressState.GetStates();
+        RefreshModelStatuses();
+        foreach (var status in modelStatuses.Where(status => status.EffectivePhase == ModelDownloadPhase.Downloading))
+            AppendActivity($"{status.Entry.RoleDisplayName} model downloading: {status.DisplayPercent:0.##}%");
         await InvokeAsync(StateHasChanged);
+    }
+
+    private void RefreshModelStatuses()
+        => modelStatuses = ModelStatus.GetStatuses();
+
+    private void CancelTaskFromUi()
+    {
+        AppendActivity("Task cancellation requested.");
+        Session.CancelTask();
+    }
+
+    private void AppendActivity(string text)
+    {
+        activityLog.Insert(0, $"[{DateTimeOffset.Now:HH:mm:ss}] {text}");
+        if (activityLog.Count > 40)
+            activityLog.RemoveAt(activityLog.Count - 1);
+    }
+
+    private static string Summarize(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "(empty)";
+
+        var compact = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return compact.Length <= 120 ? compact : $"{compact[..120]}...";
     }
 
     public ValueTask DisposeAsync()

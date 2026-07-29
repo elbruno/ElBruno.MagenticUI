@@ -1,9 +1,9 @@
 ---
-updated_at: 2026-07-24T13:57:19.296Z
-focus_area: Initial setup
+updated_at: 2026-07-29T16:10:53.7840230-04:00
+focus_area: Diagnosing and fixing the pre-orchestrator model initialization stall
 active_issues: []
 ---
 
 # What We're Focused On
 
-Getting started. Updated by coordinator at session start.
+Make model startup asynchronous, cancellable, and deferred where unused; repair lifecycle state reporting; validate with fake-loader tests and bounded browser E2E checks.

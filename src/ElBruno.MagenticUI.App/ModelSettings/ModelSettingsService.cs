@@ -1,6 +1,7 @@
 using ElBruno.LocalLLMs;
 using ElBruno.LocalLLMs.Diagnostics;
 using ElBruno.MagenticUI.App.ModelDownloadProgress;
+using Microsoft.Extensions.Logging;
 
 namespace ElBruno.MagenticUI.App.ModelSettings;
 
@@ -29,19 +30,22 @@ public sealed class ModelSettingsService : IModelSettingsService
     private readonly IPathSafetyService _pathSafetyService;
     private readonly IModelDownloadProgressStateService _modelDownloadProgressStateService;
     private readonly IModelFolderLauncher _modelFolderLauncher;
+    private readonly ILoggerFactory _loggerFactory;
 
     public ModelSettingsService(
         IConfiguration configuration,
         IHostEnvironment hostEnvironment,
         IPathSafetyService pathSafetyService,
         IModelDownloadProgressStateService modelDownloadProgressStateService,
-        IModelFolderLauncher modelFolderLauncher)
+        IModelFolderLauncher modelFolderLauncher,
+        ILoggerFactory loggerFactory)
     {
         _configuration = configuration;
         _hostEnvironment = hostEnvironment;
         _pathSafetyService = pathSafetyService;
         _modelDownloadProgressStateService = modelDownloadProgressStateService;
         _modelFolderLauncher = modelFolderLauncher;
+        _loggerFactory = loggerFactory;
     }
 
     public IReadOnlyList<ModelSettingsEntry> GetModelEntries()
@@ -145,11 +149,87 @@ public sealed class ModelSettingsService : IModelSettingsService
         {
             RemoveReadOnlyAttributes(normalizedPath);
             Directory.Delete(normalizedPath, recursive: true);
+            _modelDownloadProgressStateService.Initialize(role, entry.ModelId);
             return new(true, $"Deleted model files for {entry.RoleDisplayName}: {normalizedPath}");
         }
         catch (Exception ex)
         {
             return new(false, $"Failed to delete model files for {entry.RoleDisplayName}: {ex.Message}");
+        }
+    }
+
+    public async Task<ModelFileOperationResult> DownloadModelAsync(
+        ModelRole role,
+        CancellationToken cancellationToken = default)
+    {
+        var entry = GetModelEntry(role);
+        if (entry.IsPresent)
+            return new(true, $"{entry.RoleDisplayName} model is already present.");
+
+        if (entry.UsesExplicitPath)
+            return new(false, $"Cannot download {entry.RoleDisplayName}: an explicit model path is configured. Add files to that folder or clear ModelPath.");
+
+        var currentState = _modelDownloadProgressStateService.GetState(role);
+        if (currentState.Phase == ModelDownloadPhase.Downloading)
+            return new(false, $"{entry.RoleDisplayName} model download is already in progress.");
+
+        LocalLLMsOptions options;
+        try
+        {
+            options = BuildLocalLlmOptions(role);
+        }
+        catch (Exception ex)
+        {
+            return new(false, $"Cannot start download for {entry.RoleDisplayName}: {ex.Message}");
+        }
+
+        if (!options.EnsureModelDownloaded || options.Model is null)
+            return new(false, $"Cannot start download for {entry.RoleDisplayName}: no downloadable model is configured.");
+
+        _modelDownloadProgressStateService.Initialize(role, entry.ModelId);
+        var progress = _modelDownloadProgressStateService.CreateProgressReporter(role, entry.ModelId);
+        progress.Report(new ElBruno.LocalLLMs.ModelDownloadProgress(string.Empty, 0, 0, 0));
+
+        try
+        {
+            switch (role)
+            {
+                case ModelRole.Orchestrator:
+                    await using (await LocalChatClient.CreateAsync(options, progress, _loggerFactory, cancellationToken))
+                    {
+                    }
+                    break;
+                case ModelRole.ComputerUse:
+                    await using (await LocalVisionChatClient.CreateAsync(options, progress, cancellationToken))
+                    {
+                    }
+                    break;
+                default:
+                    return new(false, $"Cannot start download for {entry.RoleDisplayName}: unsupported model role.");
+            }
+
+            _modelDownloadProgressStateService.MarkCompleted(role, entry.ModelId);
+            var refreshedEntry = GetModelEntry(role);
+            if (!refreshedEntry.IsPresent)
+            {
+                _modelDownloadProgressStateService.MarkFailed(
+                    role,
+                    entry.ModelId,
+                    $"Model files were not found after download. Expected path: {refreshedEntry.EffectiveModelPath}");
+                return new(false, $"Download finished but model files were not found for {entry.RoleDisplayName}. Expected path: {refreshedEntry.EffectiveModelPath}");
+            }
+
+            return new(true, $"Downloaded model for {entry.RoleDisplayName}.");
+        }
+        catch (OperationCanceledException)
+        {
+            _modelDownloadProgressStateService.MarkFailed(role, entry.ModelId, "Download cancelled.");
+            return new(false, $"Download cancelled for {entry.RoleDisplayName}.");
+        }
+        catch (Exception ex)
+        {
+            _modelDownloadProgressStateService.MarkFailed(role, entry.ModelId, ex.Message);
+            return new(false, $"Failed to download model for {entry.RoleDisplayName}: {ex.Message}");
         }
     }
 
@@ -186,9 +266,17 @@ public sealed class ModelSettingsService : IModelSettingsService
         if (!string.IsNullOrWhiteSpace(configuredCacheDirectory))
             return _pathSafetyService.NormalizeAbsolutePath(configuredCacheDirectory) ?? configuredCacheDirectory;
 
-        var defaultCacheDirectory = new EnvironmentDiagnostics().CacheDirectory;
-        return _pathSafetyService.NormalizeAbsolutePath(defaultCacheDirectory)
-            ?? defaultCacheDirectory
+        var diagnosticsCacheDirectory = new EnvironmentDiagnostics().CacheDirectory;
+        if (!string.IsNullOrWhiteSpace(diagnosticsCacheDirectory))
+            return _pathSafetyService.NormalizeAbsolutePath(diagnosticsCacheDirectory) ?? diagnosticsCacheDirectory;
+
+        var localAppDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var fallbackCacheDirectory = string.IsNullOrWhiteSpace(localAppDataPath)
+            ? string.Empty
+            : Path.Combine(localAppDataPath, "ElBruno", "LocalLLMs", "models");
+
+        return _pathSafetyService.NormalizeAbsolutePath(fallbackCacheDirectory)
+            ?? fallbackCacheDirectory
             ?? string.Empty;
     }
 
