@@ -45,20 +45,42 @@ public sealed class LocalLlmClientFactory : ILocalLlmClientFactory
         _progressStateService.Initialize(modelEntry.Role, modelEntry.ModelId);
 
         var options = _modelSettingsService.BuildLocalLlmOptions(role);
-        try
-        {
-            var client = createClient(
-                options,
-                _progressStateService.CreateProgressReporter(modelEntry.Role, modelEntry.ModelId),
-                CancellationToken.None);
+        var logger = _loggerFactory.CreateLogger<LocalLlmClientFactory>();
 
-            _progressStateService.MarkCompleted(modelEntry.Role, modelEntry.ModelId);
-            return client;
-        }
-        catch (Exception ex)
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            _progressStateService.MarkFailed(modelEntry.Role, modelEntry.ModelId, ex.Message);
-            throw;
+            try
+            {
+                var client = createClient(
+                    options,
+                    _progressStateService.CreateProgressReporter(modelEntry.Role, modelEntry.ModelId),
+                    CancellationToken.None);
+
+                _progressStateService.MarkCompleted(modelEntry.Role, modelEntry.ModelId);
+                return client;
+            }
+            catch (Exception ex) when (attempt < maxAttempts && IsTransientOnnxFailure(ex))
+            {
+                var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt));
+                logger.LogWarning(
+                    "Model load attempt {Attempt}/{Max} failed for {Role} ({ModelId}): {Message}. Retrying in {Delay}s…",
+                    attempt, maxAttempts, role, modelEntry.ModelId, ex.Message, delay.TotalSeconds);
+                Thread.Sleep(delay);
+            }
+            catch (Exception ex)
+            {
+                _progressStateService.MarkFailed(modelEntry.Role, modelEntry.ModelId, ex.Message);
+                throw;
+            }
         }
+
+        // Should be unreachable — loop always returns or throws
+        throw new InvalidOperationException($"Model load for {role} exhausted all retry attempts.");
     }
+
+    private static bool IsTransientOnnxFailure(Exception ex)
+        => ex.Message.Contains("bad allocation", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("OnnxRuntimeGenAI", StringComparison.OrdinalIgnoreCase)
+        || ex is OutOfMemoryException;
 }
