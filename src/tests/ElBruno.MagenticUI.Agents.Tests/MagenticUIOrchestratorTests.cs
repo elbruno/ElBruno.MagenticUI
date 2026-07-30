@@ -1,10 +1,130 @@
+using System.Net;
 using ElBruno.MagenticUI.Agents.Orchestrator;
+using ElBruno.MagenticUI.Agents.Agents;
+using ElBruno.MagenticUI.Agents.Models;
+using ElBruno.MagenticUI.Agents.Tools;
+using Microsoft.Extensions.AI;
 using System.Text.Json;
 
 namespace ElBruno.MagenticUI.Agents.Tests;
 
 public sealed class MagenticUIOrchestratorTests
 {
+    [Fact]
+    public async Task RunAsync_WhenResponseStreamsInSmallChunks_ReportsIncrementalAssistantStreamUpdates()
+    {
+        // Arrange
+        const string finalAnswer = "El Bruno writes about local AI and .NET tooling.";
+        var chatClient = new ChunkedRecordingChatClient([CreateTextResponse(finalAnswer)], chunkSize: 8);
+
+        var workingDirectory = Path.Combine(Path.GetTempPath(), $"magentic-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingDirectory);
+
+        try
+        {
+            var fileSurfer = new FileSurferTool(workingDirectory);
+            var webFetcher = new WebFetchTool(new HttpClient(new StubHttpMessageHandler("unused")));
+            var codeExecutor = new CodeExecutorTool();
+            var computerUseTool = new ComputerUseTool(
+                _ => Task.FromException<ElBruno.LocalLLMs.LocalVisionChatClient>(new InvalidOperationException("Not expected.")),
+                workingDirectory);
+            var userProxy = new UserProxyAgent();
+            var orchestrator = new MagenticUIOrchestrator(
+                chatClient,
+                fileSurfer,
+                webFetcher,
+                codeExecutor,
+                computerUseTool,
+                userProxy,
+                maxRounds: 3,
+                maxOutputTokens: 128);
+
+            var reportedMessages = new List<AgentMessage>();
+            var progress = new Progress<AgentMessage>(reportedMessages.Add);
+            var request = new TaskRequest(Guid.NewGuid().ToString("N"), "Give me a short answer.", workingDirectory);
+
+            // Act
+            await orchestrator.RunAsync(request, progress, CancellationToken.None);
+
+            // Assert
+            var streamMessages = reportedMessages
+                .Where(message => message.AgentName == "Orchestrator" && message.Role == "assistant_stream")
+                .ToList();
+
+            Assert.True(streamMessages.Count >= 2, "Expected at least two incremental assistant_stream updates.");
+            Assert.True(streamMessages[0].Text.Length < streamMessages[^1].Text.Length);
+            Assert.Equal(finalAnswer, streamMessages[^1].Text);
+            Assert.Contains(reportedMessages, message =>
+                message.AgentName == "Orchestrator"
+                && message.Role == "assistant"
+                && message.Text == finalAnswer);
+        }
+        finally
+        {
+            if (Directory.Exists(workingDirectory))
+                Directory.Delete(workingDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_WebTask_PassesMaxOutputTokens_AndDoesNotInitializeComputerUse()
+    {
+        // Arrange
+        var chatClient = new RecordingChatClient(
+        [
+            CreateTextResponse("""{"name":"WebFetcher_FetchUrl","arguments":{"url":"https://elbruno.com"}}"""),
+            CreateTextResponse("""{"name":"Submit","arguments":{"result":"El Bruno writes about local AI."}}""")
+        ]);
+
+        var workingDirectory = Path.Combine(Path.GetTempPath(), $"magentic-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingDirectory);
+
+        try
+        {
+            var fileSurfer = new FileSurferTool(workingDirectory);
+            var webFetcher = new WebFetchTool(new HttpClient(new StubHttpMessageHandler("El Bruno writes about local AI and .NET.")));
+            var codeExecutor = new CodeExecutorTool();
+            var computerUseFactoryCalls = 0;
+            var computerUseTool = new ComputerUseTool(
+                _ =>
+                {
+                    computerUseFactoryCalls++;
+                    return Task.FromException<ElBruno.LocalLLMs.LocalVisionChatClient>(
+                        new InvalidOperationException("Computer-use model should not be initialized for a web-only task."));
+                },
+                workingDirectory);
+            var userProxy = new UserProxyAgent();
+            var orchestrator = new MagenticUIOrchestrator(
+                chatClient,
+                fileSurfer,
+                webFetcher,
+                codeExecutor,
+                computerUseTool,
+                userProxy,
+                maxRounds: 4,
+                maxOutputTokens: 128);
+
+            var reportedMessages = new List<AgentMessage>();
+            var progress = new Progress<AgentMessage>(reportedMessages.Add);
+            var request = new TaskRequest(Guid.NewGuid().ToString("N"), "Please fetch https://elbruno.com", workingDirectory);
+
+            // Act
+            await orchestrator.RunAsync(request, progress, CancellationToken.None);
+
+            // Assert
+            Assert.Equal(2, chatClient.RecordedOptions.Count);
+            Assert.All(chatClient.RecordedOptions, options => Assert.Equal(128, options.MaxOutputTokens));
+            Assert.Contains(reportedMessages, message => message.AgentName == "Orchestrator" && message.Role == "tool" && message.Text.Contains("WebFetcher_FetchUrl", StringComparison.Ordinal));
+            Assert.Contains(reportedMessages, message => message.AgentName == "Orchestrator" && message.Role == "submit" && message.Text.Contains("El Bruno writes about local AI.", StringComparison.Ordinal));
+            Assert.Equal(0, computerUseFactoryCalls);
+        }
+        finally
+        {
+            if (Directory.Exists(workingDirectory))
+                Directory.Delete(workingDirectory, recursive: true);
+        }
+    }
+
     [Fact]
     public void TryParseTextToolCall_WhenResponseContainsMultipleObjects_ParsesFirstCall()
     {
@@ -319,5 +439,108 @@ public sealed class MagenticUIOrchestratorTests
 
         // Assert
         Assert.Equal(expected, isScreenshotAction);
+    }
+
+    private static ChatResponse CreateTextResponse(string text)
+        => new(new ChatMessage(ChatRole.Assistant, text));
+
+    private sealed class RecordingChatClient(IReadOnlyList<ChatResponse> responses) : IChatClient
+    {
+        private readonly Queue<ChatResponse> _responses = new(responses);
+
+        public List<ChatOptions> RecordedOptions { get; } = [];
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("Tests should exercise the streaming orchestrator path.");
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            if (_responses.Count == 0)
+                throw new InvalidOperationException("No more chat responses were configured for the test.");
+
+            RecordedOptions.Add(options ?? new ChatOptions());
+            var response = _responses.Dequeue();
+
+            foreach (var message in response.Messages)
+            {
+                if (!string.IsNullOrEmpty(message.Text))
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, message.Text);
+
+                if (message.Contents.Count > 0)
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, message.Contents);
+            }
+
+            await Task.CompletedTask;
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class ChunkedRecordingChatClient(IReadOnlyList<ChatResponse> responses, int chunkSize) : IChatClient
+    {
+        private readonly Queue<ChatResponse> _responses = new(responses);
+        private readonly int _chunkSize = Math.Max(1, chunkSize);
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("Tests should exercise the streaming orchestrator path.");
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            if (_responses.Count == 0)
+                throw new InvalidOperationException("No more chat responses were configured for the test.");
+
+            var response = _responses.Dequeue();
+
+            foreach (var message in response.Messages)
+            {
+                if (!string.IsNullOrEmpty(message.Text))
+                {
+                    for (var index = 0; index < message.Text.Length; index += _chunkSize)
+                    {
+                        var length = Math.Min(_chunkSize, message.Text.Length - index);
+                        var chunk = message.Text.Substring(index, length);
+                        yield return new ChatResponseUpdate(ChatRole.Assistant, chunk);
+                    }
+                }
+
+                if (message.Contents.Count > 0)
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, message.Contents);
+            }
+
+            await Task.CompletedTask;
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class StubHttpMessageHandler(string content) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(content)
+            });
     }
 }

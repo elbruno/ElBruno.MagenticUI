@@ -6,5 +6,5 @@ namespace ElBruno.MagenticUI.App.LocalLlm;
 public interface ILocalLlmClientFactory
 {
     IChatClient CreateOrchestratorChatClient();
-    LocalVisionChatClient CreateComputerUseChatClient();
+    Task<LocalVisionChatClient> CreateComputerUseChatClientAsync(CancellationToken cancellationToken = default);
 }

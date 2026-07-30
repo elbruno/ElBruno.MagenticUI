@@ -4,6 +4,7 @@ using ElBruno.MagenticUI.Agents.Agents;
 using ElBruno.MagenticUI.Agents.Orchestrator;
 using ElBruno.MagenticUI.Agents.Tools;
 using ElBruno.MagenticUI.App;
+using ElBruno.MagenticUI.App.Configuration;
 using ElBruno.MagenticUI.App.LocalLlm;
 using ElBruno.MagenticUI.App.ModelDownloadProgress;
 using ElBruno.MagenticUI.App.ModelSettings;
@@ -33,14 +34,13 @@ builder.Services.AddSingleton<IModelSettingsService, ModelSettingsService>();
 builder.Services.AddSingleton<IModelStatusService, ModelStatusService>();
 builder.Services.AddSingleton<IModelDownloadProgressStateService, ModelDownloadProgressStateService>();
 builder.Services.AddSingleton<ILocalLlmClientFactory, LocalLlmClientFactory>();
+builder.Services.AddSingleton<IAppRuntimeSettingsService, AppRuntimeSettingsService>();
 
 builder.Services
     .AddChatClient(sp => sp.GetRequiredService<ILocalLlmClientFactory>().CreateOrchestratorChatClient())
     .UseOpenTelemetry(
         sourceName: genAiActivitySourceName,
         configure: telemetry => telemetry.EnableSensitiveData = builder.Environment.IsDevelopment());
-
-builder.Services.AddSingleton(sp => sp.GetRequiredService<ILocalLlmClientFactory>().CreateComputerUseChatClient());
 
 // ── Tools ─────────────────────────────────────────────────────────────────
 var configuredWorkDir = builder.Configuration["LocalLLMs:WorkingDirectory"];
@@ -58,13 +58,13 @@ builder.Services.AddSingleton<WebFetchTool>(sp =>
 
 builder.Services.AddSingleton<CodeExecutorTool>();
 builder.Services.AddSingleton<ComputerUseTool>(sp => new ComputerUseTool(
-    sp.GetRequiredService<LocalVisionChatClient>(),
+    cancellationToken => sp.GetRequiredService<ILocalLlmClientFactory>().CreateComputerUseChatClientAsync(cancellationToken),
     workDir,
     sp.GetService<ILogger<ComputerUseTool>>()));
 
 // ── Agents + Orchestrator (Scoped per Blazor circuit) ──────────────────────
 builder.Services.AddScoped<UserProxyAgent>();
-builder.Services.AddScoped<MagenticUIOrchestrator>(sp => new MagenticUIOrchestrator(
+builder.Services.AddTransient<IAgentOrchestrator>(sp => new MagenticUIOrchestrator(
     orchestratorClient: sp.GetRequiredService<IChatClient>(),
     fileSurfer: sp.GetRequiredService<FileSurferTool>(),
     webFetcher: sp.GetRequiredService<WebFetchTool>(),
@@ -72,6 +72,7 @@ builder.Services.AddScoped<MagenticUIOrchestrator>(sp => new MagenticUIOrchestra
     computerUse: sp.GetRequiredService<ComputerUseTool>(),
     userProxy: sp.GetRequiredService<UserProxyAgent>(),
     maxRounds: builder.Configuration.GetValue("LocalLLMs:MaxRounds", 15),
+    maxOutputTokens: builder.Configuration.GetValue("LocalLLMs:MaxOutputTokens", 256),
     logger: sp.GetService<ILogger<MagenticUIOrchestrator>>()));
 builder.Services.AddScoped<AgentSessionService>();
 

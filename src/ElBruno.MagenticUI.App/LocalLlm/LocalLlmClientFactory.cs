@@ -10,6 +10,8 @@ public sealed class LocalLlmClientFactory : ILocalLlmClientFactory
     private readonly IModelSettingsService _modelSettingsService;
     private readonly IModelDownloadProgressStateService _progressStateService;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly SemaphoreSlim _computerUseClientLock = new(1, 1);
+    private LocalVisionChatClient? _computerUseClient;
 
     public LocalLlmClientFactory(
         IModelSettingsService modelSettingsService,
@@ -22,24 +24,42 @@ public sealed class LocalLlmClientFactory : ILocalLlmClientFactory
     }
 
     public IChatClient CreateOrchestratorChatClient()
-        => CreateClient(
+        => CreateClientAsync(
             ModelRole.Orchestrator,
             (options, progress, cancellationToken) => LocalChatClient
-                .CreateAsync(options, progress, _loggerFactory, cancellationToken)
-                .GetAwaiter()
-                .GetResult());
+                .CreateAsync(options, progress, _loggerFactory, cancellationToken),
+            CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
 
-    public LocalVisionChatClient CreateComputerUseChatClient()
-        => CreateClient(
-            ModelRole.ComputerUse,
-            (options, progress, cancellationToken) => LocalVisionChatClient
-                .CreateAsync(options, progress, cancellationToken)
-                .GetAwaiter()
-                .GetResult());
+    public async Task<LocalVisionChatClient> CreateComputerUseChatClientAsync(CancellationToken cancellationToken = default)
+    {
+        if (_computerUseClient is not null)
+            return _computerUseClient;
 
-    private TClient CreateClient<TClient>(
+        await _computerUseClientLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_computerUseClient is not null)
+                return _computerUseClient;
+
+            _computerUseClient = await CreateClientAsync(
+                ModelRole.ComputerUse,
+                (options, progress, ct) => LocalVisionChatClient.CreateAsync(options, progress, ct),
+                cancellationToken);
+
+            return _computerUseClient;
+        }
+        finally
+        {
+            _computerUseClientLock.Release();
+        }
+    }
+
+    private async Task<TClient> CreateClientAsync<TClient>(
         ModelRole role,
-        Func<LocalLLMsOptions, IProgress<ElBruno.LocalLLMs.ModelDownloadProgress>, CancellationToken, TClient> createClient)
+        Func<LocalLLMsOptions, IProgress<ElBruno.LocalLLMs.ModelDownloadProgress>, CancellationToken, Task<TClient>> createClient,
+        CancellationToken cancellationToken)
     {
         var modelEntry = _modelSettingsService.GetModelEntry(role);
         _progressStateService.Initialize(modelEntry.Role, modelEntry.ModelId);
@@ -52,13 +72,18 @@ public sealed class LocalLlmClientFactory : ILocalLlmClientFactory
         {
             try
             {
-                var client = createClient(
+                var client = await createClient(
                     options,
                     _progressStateService.CreateProgressReporter(modelEntry.Role, modelEntry.ModelId),
-                    CancellationToken.None);
+                    cancellationToken);
 
                 _progressStateService.MarkCompleted(modelEntry.Role, modelEntry.ModelId);
                 return client;
+            }
+            catch (OperationCanceledException)
+            {
+                _progressStateService.MarkFailed(modelEntry.Role, modelEntry.ModelId, "Initialization cancelled.");
+                throw;
             }
             catch (Exception ex) when (attempt < maxAttempts && IsTransientOnnxFailure(ex))
             {
@@ -66,7 +91,7 @@ public sealed class LocalLlmClientFactory : ILocalLlmClientFactory
                 logger.LogWarning(
                     "Model load attempt {Attempt}/{Max} failed for {Role} ({ModelId}): {Message}. Retrying in {Delay}s…",
                     attempt, maxAttempts, role, modelEntry.ModelId, ex.Message, delay.TotalSeconds);
-                Thread.Sleep(delay);
+                await Task.Delay(delay, cancellationToken);
             }
             catch (Exception ex)
             {

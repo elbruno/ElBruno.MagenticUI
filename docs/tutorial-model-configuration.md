@@ -33,11 +33,13 @@ Edit `src/ElBruno.MagenticUI.App/appsettings.json`:
 | Setting | Description |
 |---------|-------------|
 | `Models:Orchestrator:*` | MagenticBrain reasoning/delegation model configuration. |
-| `Models:ComputerUse:*` | Fara computer-use/vision model configuration. |
+| `Models:ComputerUse:*` | Fara computer-use/vision model configuration. Loaded lazily only when a computer-use tool is invoked. |
 | `CacheDirectory` | Override the auto-download cache (default: `%LOCALAPPDATA%\\ElBruno\\LocalLLMs\\models`). |
-| `ExecutionProvider` | ONNX execution provider (`Cpu`, `Cuda`, `DirectML`, or `Auto`). Default: `Cpu`. |
+| `ExecutionProvider` | ONNX execution provider (`Cpu`, `Cuda`, `DirectML`, or `Auto`). Default: `Auto` (falls back to CPU when GPU providers are unavailable). |
 | `WorkingDirectory` | Sandbox directory for FileSurfer file operations. |
 | `MaxRounds` | Maximum agent rounds before the orchestrator stops (default: 15). |
+| `MaxOutputTokens` | Maximum tokens generated per orchestrator response (default: 256). Lower values can improve responsiveness. |
+| `TaskTimeoutSeconds` | Overall task timeout for a session (0 disables the timeout). |
 
 `microsoft/Fara1.5-9B` is a vision-and-action model and may require a dedicated vision flow
 depending on your scenario. After changing model settings, restart Aspire:
@@ -54,3 +56,12 @@ aspire start
 - While a download is running, you can watch progress in both:
   - **Settings** (per-card download status/progress)
   - **Tasks** (live top-panel progress while executing tasks)
+
+## Runtime behavior notes
+
+- **Computer-use model is on-demand.** The `ComputerUse` model is not loaded during every task start.
+  It is initialized only when tools like `Computer_DescribeImage` are actually called.
+- **Cancellation is explicit.** When you cancel a run from the Tasks page, status transitions to
+  `Cancelling…` before settling to `Idle` or `Error`.
+- **Token cap tuning.** If outputs are too long or slow, reduce `MaxOutputTokens`; if outputs are
+  too brief, increase it incrementally.

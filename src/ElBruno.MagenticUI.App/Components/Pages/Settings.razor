@@ -4,7 +4,9 @@
 @inject IModelSettingsService ModelSettings
 @inject IModelStatusService ModelStatus
 @inject IModelDownloadProgressStateService ModelDownloadProgressState
+@inject IAppRuntimeSettingsService RuntimeSettings
 @using ElBruno.MagenticUI.App.ModelDownloadProgress
+@using ElBruno.MagenticUI.App.Configuration
 @using ElBruno.MagenticUI.App.ModelSettings
 
 <PageTitle>Settings — Model Management</PageTitle>
@@ -16,6 +18,63 @@
             <p class="text-muted mb-0">Model paths, local presence, and download progress.</p>
         </div>
         <span class="badge text-bg-light border px-3 py-2">Models: @modelStatuses.Count</span>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+        <div class="card-header fw-semibold">Runtime configuration</div>
+        <div class="card-body">
+            @if (!string.IsNullOrWhiteSpace(runtimeMessage))
+            {
+                <div class="alert @runtimeMessageClass d-flex justify-content-between align-items-start gap-2 py-2">
+                    <span>@runtimeMessage</span>
+                    <button type="button" class="btn-close" aria-label="Close" @onclick="ClearRuntimeMessage"></button>
+                </div>
+            }
+
+            <div class="row g-3">
+                <div class="col-12 col-xl-6">
+                    <label class="form-label fw-semibold" for="orchestratorModelPath">Orchestrator model path</label>
+                    <input id="orchestratorModelPath" class="form-control" @bind="orchestratorModelPath" />
+                    <div class="form-text">Leave blank to use auto-download for the orchestrator model.</div>
+                </div>
+
+                <div class="col-12 col-xl-6">
+                    <label class="form-label fw-semibold" for="computerUseModelPath">Computer-use model path</label>
+                    <input id="computerUseModelPath" class="form-control" @bind="computerUseModelPath" />
+                    <div class="form-text">Leave blank to use auto-download for the computer-use model.</div>
+                </div>
+
+                <div class="col-12 col-md-6 col-xl-3">
+                    <label class="form-label fw-semibold" for="maxRounds">Max rounds</label>
+                    <input id="maxRounds" class="form-control" type="number" min="1" step="1" @bind="maxRounds" />
+                </div>
+
+                <div class="col-12 col-md-6 col-xl-3">
+                    <label class="form-label fw-semibold" for="taskTimeoutSeconds">Task timeout (seconds)</label>
+                    <input id="taskTimeoutSeconds" class="form-control" type="number" min="0" step="1" @bind="taskTimeoutSeconds" />
+                    <div class="form-text">Set to 0 to disable the overall task timeout.</div>
+                </div>
+
+                <div class="col-12 col-md-6 col-xl-3">
+                    <label class="form-label fw-semibold" for="maxOutputTokens">Max output tokens</label>
+                    <input id="maxOutputTokens" class="form-control" type="number" min="1" step="1" @bind="maxOutputTokens" />
+                    <div class="form-text">Limits each orchestrator model response to keep local runs responsive. Lower = faster/shorter, higher = slower/more complete.</div>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2 flex-wrap mt-3">
+                <button class="btn btn-primary"
+                        disabled="@isSavingRuntimeSettings"
+                        @onclick="SaveRuntimeSettingsAsync">
+                    @(isSavingRuntimeSettings ? "Saving..." : "Save settings")
+                </button>
+                <button class="btn btn-outline-secondary"
+                        disabled="@isSavingRuntimeSettings"
+                        @onclick="ReloadRuntimeSettingsAsync">
+                    Reload current values
+                </button>
+            </div>
+        </div>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(actionMessage))
@@ -166,10 +225,19 @@
     private bool isLoading = true;
     private string? actionMessage;
     private string actionMessageClass = "alert-info";
+    private string? runtimeMessage;
+    private string runtimeMessageClass = "alert-info";
+    private string orchestratorModelPath = string.Empty;
+    private string computerUseModelPath = string.Empty;
+    private int maxRounds = 15;
+    private int taskTimeoutSeconds;
+    private int maxOutputTokens = 256;
+    private bool isSavingRuntimeSettings;
 
     protected override async Task OnInitializedAsync()
     {
         ModelDownloadProgressState.OnChanged += OnDownloadStateChangedAsync;
+        await ReloadRuntimeSettingsAsync();
         await RefreshModelDataAsync();
         isLoading = false;
     }
@@ -222,6 +290,9 @@
     private void ClearActionMessage()
         => actionMessage = null;
 
+    private void ClearRuntimeMessage()
+        => runtimeMessage = null;
+
     private void RequestDelete(ModelRole role)
     {
         pendingDeleteConfirmation.Clear();
@@ -250,6 +321,44 @@
     {
         RefreshModelStatuses();
         return Task.CompletedTask;
+    }
+
+    private Task ReloadRuntimeSettingsAsync()
+    {
+        var settings = RuntimeSettings.GetCurrentSettings();
+        orchestratorModelPath = settings.OrchestratorModelPath;
+        computerUseModelPath = settings.ComputerUseModelPath;
+        maxRounds = settings.MaxRounds;
+        taskTimeoutSeconds = settings.TaskTimeoutSeconds;
+        maxOutputTokens = settings.MaxOutputTokens;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveRuntimeSettingsAsync()
+    {
+        if (isSavingRuntimeSettings)
+            return;
+
+        isSavingRuntimeSettings = true;
+        runtimeMessage = "Saving runtime settings...";
+        runtimeMessageClass = "alert-info";
+        await InvokeAsync(StateHasChanged);
+
+        var result = await RuntimeSettings.SaveAsync(new RuntimeSettingsSnapshot(
+            orchestratorModelPath,
+            computerUseModelPath,
+            maxRounds,
+            taskTimeoutSeconds,
+            maxOutputTokens));
+
+        runtimeMessageClass = result.Succeeded ? "alert-success" : "alert-danger";
+        runtimeMessage = result.Message;
+        isSavingRuntimeSettings = false;
+
+        if (result.Succeeded)
+            await RefreshModelDataAsync();
+
+        await InvokeAsync(StateHasChanged);
     }
 
     private void RefreshModelStatuses()

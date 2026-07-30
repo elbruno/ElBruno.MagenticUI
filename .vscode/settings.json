@@ -1,11 +1,17 @@
 {
     "github.copilot.chat.agent.network.domains.allow": [
         "localhost",
-        "127.0.0.1"
+        "127.0.0.1",
+        "github.com",
+        "api.github.com",
+        "raw.githubusercontent.com"
     ],
     "chat.agent.allowedNetworkDomains": [
         "localhost",
-        "127.0.0.1"
+        "127.0.0.1",
+        "github.com",
+        "api.github.com",
+        "raw.githubusercontent.com"
     ],
     "chat.agent.deniedNetworkDomains": []
 }

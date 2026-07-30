@@ -151,11 +151,11 @@
             </div>
         </div>
     }
-    @if (Session.Status is AgentTaskStatus.Running or AgentTaskStatus.WaitingForInput)
+    @if (Session.Status is AgentTaskStatus.Running or AgentTaskStatus.Cancelling or AgentTaskStatus.WaitingForInput)
     {
         <div class="mb-3">
-            <button class="btn btn-outline-danger btn-sm" @onclick="CancelTaskFromUi">
-                ✕ Cancel Task
+            <button class="btn btn-outline-danger btn-sm" @onclick="CancelTaskFromUi" disabled="@(Session.Status == AgentTaskStatus.Cancelling)">
+                @(Session.Status == AgentTaskStatus.Cancelling ? "⏳ Cancelling..." : "✕ Cancel Task")
             </button>
         </div>
     }
@@ -222,14 +222,14 @@
     <div class="card shadow-sm mb-3">
         <div class="card-header fw-semibold">Live activity log</div>
         <div class="card-body py-2">
-            @if (activityLog.Count == 0)
+            @if (ActivityLog.Count == 0)
             {
                 <div class="text-muted small">No activity yet.</div>
             }
             else
             {
                 <ul class="activity-log-list mb-0">
-                    @foreach (var line in activityLog)
+                    @foreach (var line in ActivityLog)
                     {
                         <li>@line</li>
                     }
@@ -237,7 +237,7 @@
             }
         </div>
     </div>
-    @if (cachedMessages.Count > 0 || Session.Status is AgentTaskStatus.Running or AgentTaskStatus.WaitingForInput)
+    @if (cachedMessages.Count > 0 || Session.Status is AgentTaskStatus.Running or AgentTaskStatus.Cancelling or AgentTaskStatus.WaitingForInput)
     {
         <div class="card shadow-sm">
             <div class="card-header d-flex justify-content-between align-items-center">
@@ -245,7 +245,7 @@
                 <span class="badge bg-secondary">@cachedMessages.Count</span>
             </div>
             <div class="card-body p-2 message-feed" @ref="messageFeedRef">
-                @if (cachedMessages.Count == 0 && Session.Status is AgentTaskStatus.Running or AgentTaskStatus.WaitingForInput)
+                @if (cachedMessages.Count == 0 && Session.Status is AgentTaskStatus.Running or AgentTaskStatus.Cancelling or AgentTaskStatus.WaitingForInput)
                 {
                     <div class="message-row msg-default">
                         <span class="text-muted fst-italic">No agent messages yet. The orchestrator is preparing the run.</span>
@@ -268,7 +268,7 @@
                         {
                             <p class="message-body mb-0 text-muted">Screenshot captured (see "Computer Agent Live View").</p>
                         }
-                        else if (msg.Text.Contains('\n') || msg.Role is "tool" or "code_output")
+                        else if (msg.Text.Contains('\n') || msg.Role is "tool" or "code_output" or "assistant_stream")
                         {
                             <pre class="message-body">@msg.Text</pre>
                         }
@@ -278,11 +278,11 @@
                         }
                     </div>
                 }
-                @if (Session.Status == AgentTaskStatus.Running)
+                @if (Session.Status is AgentTaskStatus.Running or AgentTaskStatus.Cancelling)
                 {
                     <div class="message-row msg-default thinking-row">
                         <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                        <span class="text-muted fst-italic">Agents are working…</span>
+                        <span class="text-muted fst-italic">@(Session.Status == AgentTaskStatus.Cancelling ? "Cancelling task…" : "Agents are working…")</span>
                     </div>
                 }
             </div>
@@ -301,6 +301,7 @@
     private string? latestBrowserScreenshot;
     private IReadOnlyList<string> browserActions = [];
     private readonly List<string> activityLog = [];
+    private readonly object activityLogLock = new();
     private AgentTaskStatus? previousStatus;
     private ElementReference messageFeedRef;
     private static readonly TimeSpan DownloadNoticeWindow = TimeSpan.FromSeconds(20);
@@ -368,6 +369,15 @@
             .OrderByDescending(status => status.DownloadState.LastUpdated)
             .ToArray();
 
+    private IReadOnlyList<string> ActivityLog
+    {
+        get
+        {
+            lock (activityLogLock)
+                return [.. activityLog];
+        }
+    }
+
     protected override void OnInitialized()
     {
         Session.OnChanged += OnSessionChanged;
@@ -382,6 +392,7 @@
     {
         AgentTaskStatus.Idle           => "Idle",
         AgentTaskStatus.Running        => "Running…",
+        AgentTaskStatus.Cancelling     => "Cancelling…",
         AgentTaskStatus.WaitingForInput => "Waiting for input",
         AgentTaskStatus.Done           => "Done ✓",
         AgentTaskStatus.Error          => "Error",
@@ -391,6 +402,7 @@
     private string StatusBadgeClass => Session.Status switch
     {
         AgentTaskStatus.Running        => "bg-primary status-running",
+        AgentTaskStatus.Cancelling     => "bg-warning text-dark",
         AgentTaskStatus.WaitingForInput => "bg-warning text-dark",
         AgentTaskStatus.Done           => "bg-success",
         AgentTaskStatus.Error          => "bg-danger",
@@ -562,9 +574,12 @@
 
     private void AppendActivity(string text)
     {
-        activityLog.Insert(0, $"[{DateTimeOffset.Now:HH:mm:ss}] {text}");
-        if (activityLog.Count > 40)
-            activityLog.RemoveAt(activityLog.Count - 1);
+        lock (activityLogLock)
+        {
+            activityLog.Insert(0, $"[{DateTimeOffset.Now:HH:mm:ss}] {text}");
+            if (activityLog.Count > 40)
+                activityLog.RemoveAt(activityLog.Count - 1);
+        }
     }
 
     private static string Summarize(string text)

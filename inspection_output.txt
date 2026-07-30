@@ -1,0 +1,24 @@
+--- IChatClient ---
+System.Threading.Tasks.Task`1[Microsoft.Extensions.AI.ChatResponse] GetResponseAsync(System.Collections.Generic.IEnumerable`1[Microsoft.Extensions.AI.ChatMessage], Microsoft.Extensions.AI.ChatOptions, System.Threading.CancellationToken)
+System.Collections.Generic.IAsyncEnumerable`1[Microsoft.Extensions.AI.ChatResponseUpdate] GetStreamingResponseAsync(System.Collections.Generic.IEnumerable`1[Microsoft.Extensions.AI.ChatMessage], Microsoft.Extensions.AI.ChatOptions, System.Threading.CancellationToken)
+System.Object GetService(System.Type, System.Object)
+--- ChatResponse ---
+Void .ctor()
+Void .ctor(Microsoft.Extensions.AI.ChatMessage)
+Void .ctor(System.Collections.Generic.IList`1[Microsoft.Extensions.AI.ChatMessage])
+System.Collections.Generic.IList`1[Microsoft.Extensions.AI.ChatMessage] Messages
+System.String ResponseId
+System.String ConversationId
+System.String ModelId
+System.Nullable`1[System.DateTimeOffset] CreatedAt
+System.Nullable`1[Microsoft.Extensions.AI.ChatFinishReason] FinishReason
+Microsoft.Extensions.AI.UsageDetails Usage
+Microsoft.Extensions.AI.ResponseContinuationToken ContinuationToken
+System.Object RawRepresentation
+Microsoft.Extensions.AI.AdditionalPropertiesDictionary AdditionalProperties
+--- ChatMessage ---
+Void .ctor()
+Void .ctor(Microsoft.Extensions.AI.ChatRole, System.String)
+Void .ctor(Microsoft.Extensions.AI.ChatRole, System.Collections.Generic.IList`1[Microsoft.Extensions.AI.AIContent])
+--- FunctionCallContent ---
+Void .ctor(System.String, System.String, System.Collections.Generic.IDictionary`2[System.String,System.Object])

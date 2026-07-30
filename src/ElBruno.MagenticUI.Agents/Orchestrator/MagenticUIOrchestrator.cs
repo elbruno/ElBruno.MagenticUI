@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using ElBruno.MagenticUI.Agents.Agents;
 using ElBruno.MagenticUI.Agents.Models;
@@ -9,10 +11,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ElBruno.MagenticUI.Agents.Orchestrator;
 
-public sealed class MagenticUIOrchestrator
+public sealed class MagenticUIOrchestrator : IAgentOrchestrator
 {
     private const int MaxModelToolResultCharacters = 400;
     private const int MaxScreenshotBytes = 1_500_000;
+    private static readonly TimeSpan StreamingProgressInterval = TimeSpan.FromMilliseconds(150);
+    private const int StreamingProgressCharacterThreshold = 24;
     private readonly IChatClient _orchestratorClient;
     private readonly FileSurferTool _fileSurfer;
     private readonly WebFetchTool _webFetcher;
@@ -20,6 +24,7 @@ public sealed class MagenticUIOrchestrator
     private readonly ComputerUseTool _computerUse;
     private readonly UserProxyAgent _userProxy;
     private readonly int _maxRounds;
+    private readonly int _maxOutputTokens;
     private readonly ILogger<MagenticUIOrchestrator> _logger;
 
     private IProgress<AgentMessage>? _currentProgress;
@@ -33,6 +38,7 @@ public sealed class MagenticUIOrchestrator
         ComputerUseTool computerUse,
         UserProxyAgent userProxy,
         int maxRounds = 15,
+        int maxOutputTokens = 256,
         ILogger<MagenticUIOrchestrator>? logger = null)
     {
         _orchestratorClient = orchestratorClient;
@@ -42,6 +48,7 @@ public sealed class MagenticUIOrchestrator
         _computerUse = computerUse;
         _userProxy = userProxy;
         _maxRounds = maxRounds;
+        _maxOutputTokens = Math.Max(1, maxOutputTokens);
         _logger = logger ?? NullLogger<MagenticUIOrchestrator>.Instance;
     }
 
@@ -76,15 +83,17 @@ public sealed class MagenticUIOrchestrator
             ChatResponse response;
             try
             {
-                response = await _orchestratorClient.GetResponseAsync(
+                response = await GetOrchestratorResponseAsync(
                     messages,
-                    new ChatOptions { Tools = tools },
+                    tools,
+                    progress,
+                    round,
                     ct);
             }
             catch (OperationCanceledException)
             {
                 Report(progress, "Orchestrator", "system", "Task cancelled.", round);
-                return;
+                throw;
             }
             catch (Exception ex)
             {
@@ -276,7 +285,7 @@ public sealed class MagenticUIOrchestrator
     private Task<string> DescribeImageDelegate(
         [Description("Relative image path in working directory")] string relativePath,
         [Description("Question/instruction for the computer-use model")] string prompt = "Describe what is visible in this image.") =>
-        _computerUse.DescribeImage(relativePath, prompt);
+        _computerUse.DescribeImage(relativePath, prompt, _currentCt);
 
     [Description("Requests clarification from the user.")]
     private Task<string> RequestClarificationDelegate(
@@ -465,6 +474,72 @@ public sealed class MagenticUIOrchestrator
         string text,
         int round) =>
         progress.Report(new AgentMessage(agentName, role, text, round, DateTimeOffset.UtcNow));
+
+    private async Task<ChatResponse> GetOrchestratorResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        IList<AITool> tools,
+        IProgress<AgentMessage> progress,
+        int round,
+        CancellationToken ct)
+    {
+        var options = new ChatOptions
+        {
+            Tools = tools,
+            MaxOutputTokens = _maxOutputTokens
+        };
+
+        var textBuilder = new StringBuilder();
+        List<AIContent>? nonTextContents = null;
+        var lastReportedLength = 0;
+        var lastReportedAt = TimeSpan.Zero;
+        var hasReportedStream = false;
+        var stopwatch = Stopwatch.StartNew();
+
+        await foreach (var update in _orchestratorClient.GetStreamingResponseAsync(messages, options, ct))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!string.IsNullOrEmpty(update.Text))
+                textBuilder.Append(update.Text);
+
+            if (update.Contents is { Count: > 0 })
+            {
+                foreach (var content in update.Contents.Where(content => content is not TextContent))
+                {
+                    nonTextContents ??= [];
+                    nonTextContents.Add(content);
+                }
+            }
+
+            if (textBuilder.Length == 0)
+                continue;
+
+            var shouldReport = !hasReportedStream
+                || textBuilder.Length - lastReportedLength >= StreamingProgressCharacterThreshold
+                || stopwatch.Elapsed - lastReportedAt >= StreamingProgressInterval;
+            if (!shouldReport)
+                continue;
+
+            lastReportedLength = textBuilder.Length;
+            lastReportedAt = stopwatch.Elapsed;
+            hasReportedStream = true;
+            Report(progress, "Orchestrator", "assistant_stream", textBuilder.ToString(), round);
+        }
+
+        if (textBuilder.Length > 0 && textBuilder.Length != lastReportedLength)
+            Report(progress, "Orchestrator", "assistant_stream", textBuilder.ToString(), round);
+
+        var finalText = textBuilder.ToString();
+        if (nonTextContents is not { Count: > 0 })
+            return new ChatResponse(new ChatMessage(ChatRole.Assistant, finalText));
+
+        var finalContents = new List<AIContent>();
+        if (!string.IsNullOrWhiteSpace(finalText))
+            finalContents.Add(new TextContent(finalText));
+
+        finalContents.AddRange(nonTextContents);
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, finalContents));
+    }
 
     private static void ReportComputerAction(
         IProgress<AgentMessage> progress,

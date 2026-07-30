@@ -64,6 +64,14 @@ In **Settings**, each model card shows:
 
 Delete is blocked while a model is actively downloading.
 
+Runtime controls in **Settings** also include:
+
+- **Max rounds** (orchestration loop cap)
+- **Task timeout (seconds)** (`0` disables timeout)
+- **Max output tokens** (limits per-response generation size)
+
+> Tip: if local responses feel slow, reduce **Max output tokens** first.
+
 ---
 
 ## Aspire Dashboard
@@ -104,10 +112,16 @@ During first-run model fetches, the **Tasks** page also shows:
 - active per-model progress bars with file/byte progress
 - short completion/failure notices when downloads finish
 
+If you click **Cancel Task**, status changes to **Cancelling…** while in-flight model work is
+being interrupted, then transitions when cancellation completes.
+
 ### What to expect
 
 Depending on model speed (CPU ~30-60 s per round, DirectML ~5-10 s), the task
 completes in 2-4 rounds. The feed updates in real time.
+
+With `ExecutionProvider: Auto` (default), the runtime attempts GPU acceleration first when
+available, and falls back to CPU automatically when provider dependencies are missing.
 
 ### Try variations
 
