@@ -123,6 +123,16 @@ completes in 2-4 rounds. The feed updates in real time.
 With `ExecutionProvider: Auto` (default), the runtime attempts GPU acceleration first when
 available, and falls back to CPU automatically when provider dependencies are missing.
 
+### Screenshot (validated)
+
+![Scenario 1 done state](../images/tutorial-scenario1-done.png)
+
+Expected completion signals:
+
+- Status changes to **Done ✓**
+- A `WebFetcher_FetchUrl` tool call appears in the feed
+- Final `submit` message returns a 3-sentence summary of the target page
+
 ### Try variations
 
 - `Summarise https://github.com/microsoft/magentic-ui/blob/main/README.md`
@@ -168,6 +178,21 @@ working directory.
 FileSurfer is sandboxed to `LocalLLMs:WorkingDirectory` (defaults to
 `%TEMP%\magentic-sandbox`). It cannot read outside that directory.
 
+### Screenshot (validated)
+
+![Scenario 2 done state](../images/tutorial-scenario2-done.png)
+
+Expected completion signals:
+
+- Status changes to **Done ✓**
+- Tool sequence includes `FileSurfer_ListDirectory` and multiple `FileSurfer_ReadFile`
+- Final `submit` contains the computed totals
+
+For the sample invoice data above, expected result is:
+
+- **Total amount:** `$845.50`
+- **Highest client total:** `Contoso ($670.00)`
+
 ### Try variations
 
 - Drop a CSV or JSON file and ask for specific data extraction
@@ -203,6 +228,23 @@ FileSurfer is sandboxed to `LocalLLMs:WorkingDirectory` (defaults to
 
 You should get a visual summary grounded in the screenshot content, produced by the
 computer-use model instead of manual PNG header parsing.
+
+### Screenshot (current observed behavior)
+
+![Scenario 3 current error state](../images/tutorial-scenario3-error.png)
+
+Expected behavior when environment is fully compatible:
+
+- `Coder_ExecuteCode` (or equivalent file preparation) provides `magentic_releases.png`
+- `Computer_DescribeImage` runs with the Fara model
+- Orchestrator emits a final `submit` with a 3-bullet image summary
+
+Current validated behavior in this environment (Windows, this run):
+
+- `Computer_DescribeImage` is invoked and a live screenshot is captured in **Computer Agent Live View**
+- Fara model load/inference fails with:
+   - `com.microsoft:CausalConvWithState(-1) is not a registered function/op`
+- Orchestrator may continue fallback attempts (for example, additional web fetches) and can remain in **Running…**
 
 ---
 

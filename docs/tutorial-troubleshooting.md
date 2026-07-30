@@ -10,3 +10,5 @@
 | Task stays in `Cancelling…` for a while | Cancellation is cooperative. The current model/tool call must reach a cancellation boundary before the status can finalize. |
 | Scenario 1 feels slow on first run | First-run orchestrator model warm-up and download can take time. The computer-use model is lazy-loaded and should not block non-vision scenarios. |
 | Assistant output appears in chunks | Streaming updates are coalesced into incremental `assistant_stream` messages for readability; this is expected behavior. |
+| `Coder_ExecuteCode` times out in Scenario 3 image download | The default code execution timeout is 30 seconds. Pre-place the image file in `LocalLLMs:WorkingDirectory` (for example `%TEMP%\magentic-sandbox`) and rerun the task with direct `Computer_DescribeImage`. |
+| `Computer_DescribeImage` fails with `CausalConvWithState ... not a registered function/op` | The local ONNX Runtime GenAI build/model combination is incompatible for this computer-use model. Use the troubleshooting/model configuration guides to align model/runtime versions, then restart and retry Scenario 3. |
