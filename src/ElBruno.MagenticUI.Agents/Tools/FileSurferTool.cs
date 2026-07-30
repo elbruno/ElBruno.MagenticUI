@@ -33,6 +33,29 @@ public sealed class FileSurferTool
         File.WriteAllText(fullPath, content);
     }
 
+    [Description("Creates a directory at the given path relative to the working directory.")]
+    public void CreateDirectory(
+        [Description("Relative path to the directory inside the working directory")] string relativePath)
+    {
+        var fullPath = ResolveSandboxed(relativePath);
+        Directory.CreateDirectory(fullPath);
+    }
+
+    [Description("Moves or renames a file from one relative path to another within the working directory.")]
+    public void MoveFile(
+        [Description("Source relative file path inside the working directory")] string sourceRelativePath,
+        [Description("Destination relative file path inside the working directory")] string destinationRelativePath)
+    {
+        var sourcePath = ResolveSandboxed(sourceRelativePath);
+        var destinationPath = ResolveSandboxed(destinationRelativePath);
+
+        if (!File.Exists(sourcePath))
+            throw new FileNotFoundException($"Source file not found: {sourceRelativePath}", sourcePath);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+        File.Move(sourcePath, destinationPath, overwrite: true);
+    }
+
     [Description("Lists files and subdirectories at the given path relative to the working directory. Defaults to the working directory root.")]
     public string ListDirectory(
         [Description("Relative path to list, or null/empty for the working directory root")] string? relativePath = null)

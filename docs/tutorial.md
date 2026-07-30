@@ -251,6 +251,8 @@ Current validated behavior in this environment (Windows, this run):
 ## Additional Guides
 
 - [Human-in-the-Loop](./tutorial-human-in-the-loop.md)
+- [Scenario Playbooks (P1)](./tutorial-scenario-playbooks.md)
 - [Configuring a Different Model](./tutorial-model-configuration.md)
 - [Troubleshooting](./tutorial-troubleshooting.md)
 - [Native DLL Note](./tutorial-native-dll-note.md)
+- [Upstream Scenario Coverage](./upstream-scenario-coverage.md)

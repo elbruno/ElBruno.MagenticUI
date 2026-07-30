@@ -11,6 +11,113 @@ namespace ElBruno.MagenticUI.Agents.Tests;
 public sealed class MagenticUIOrchestratorTests
 {
     [Fact]
+    public async Task RunAsync_WhenStreamingNeverYields_FallsBackAfterTimeout()
+    {
+        // Arrange
+        var chatClient = new HangingStreamingFallbackChatClient(
+            [CreateTextResponse("""{"name":"Submit","arguments":{"result":"Recovered from stalled streaming."}}""")]);
+
+        var workingDirectory = Path.Combine(Path.GetTempPath(), $"magentic-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingDirectory);
+
+        try
+        {
+            var fileSurfer = new FileSurferTool(workingDirectory);
+            var webFetcher = new WebFetchTool(new HttpClient(new StubHttpMessageHandler("unused")));
+            var codeExecutor = new CodeExecutorTool();
+            var computerUseTool = new ComputerUseTool(
+                _ => Task.FromException<ElBruno.LocalLLMs.LocalVisionChatClient>(new InvalidOperationException("Not expected.")),
+                workingDirectory);
+            var userProxy = new UserProxyAgent();
+            var orchestrator = new MagenticUIOrchestrator(
+                chatClient,
+                fileSurfer,
+                webFetcher,
+                codeExecutor,
+                computerUseTool,
+                userProxy,
+                maxRounds: 2,
+                maxOutputTokens: 128,
+                streamingFallbackTimeout: TimeSpan.FromMilliseconds(75),
+                nonStreamingFallbackTimeout: TimeSpan.FromSeconds(2));
+
+            var reportedMessages = new List<AgentMessage>();
+            var progress = new SynchronousProgress<AgentMessage>(reportedMessages.Add);
+            var request = new TaskRequest(Guid.NewGuid().ToString("N"), "Return a final answer.", workingDirectory);
+
+            // Act
+            await orchestrator.RunAsync(request, progress, CancellationToken.None);
+
+            // Assert
+            Assert.Equal(1, chatClient.StreamingCalls);
+            Assert.Equal(1, chatClient.NonStreamingCalls);
+            Assert.Contains(reportedMessages, message =>
+                message.AgentName == "Orchestrator"
+                && message.Role == "submit"
+                && message.Text.Contains("Recovered from stalled streaming.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(workingDirectory))
+                Directory.Delete(workingDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenStreamingReturnsNoUpdates_FallsBackToNonStreamingResponse()
+    {
+        // Arrange
+        var chatClient = new EmptyStreamingFallbackChatClient(
+            [
+                CreateTextResponse("""{"name":"WebFetcher_FetchUrl","arguments":{"url":"https://elbruno.com"}}"""),
+                CreateTextResponse("""{"name":"Submit","arguments":{"result":"Fallback path completed."}}""")
+            ]);
+
+        var workingDirectory = Path.Combine(Path.GetTempPath(), $"magentic-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingDirectory);
+
+        try
+        {
+            var fileSurfer = new FileSurferTool(workingDirectory);
+            var webFetcher = new WebFetchTool(new HttpClient(new StubHttpMessageHandler("El Bruno page content.")));
+            var codeExecutor = new CodeExecutorTool();
+            var computerUseTool = new ComputerUseTool(
+                _ => Task.FromException<ElBruno.LocalLLMs.LocalVisionChatClient>(new InvalidOperationException("Not expected.")),
+                workingDirectory);
+            var userProxy = new UserProxyAgent();
+            var orchestrator = new MagenticUIOrchestrator(
+                chatClient,
+                fileSurfer,
+                webFetcher,
+                codeExecutor,
+                computerUseTool,
+                userProxy,
+                maxRounds: 4,
+                maxOutputTokens: 128);
+
+            var reportedMessages = new List<AgentMessage>();
+            var progress = new SynchronousProgress<AgentMessage>(reportedMessages.Add);
+            var request = new TaskRequest(Guid.NewGuid().ToString("N"), "Please fetch https://elbruno.com", workingDirectory);
+
+            // Act
+            await orchestrator.RunAsync(request, progress, CancellationToken.None);
+
+            // Assert
+            Assert.Equal(2, chatClient.NonStreamingCalls);
+            Assert.Equal(2, chatClient.StreamingCalls);
+            Assert.Contains(reportedMessages, message =>
+                message.AgentName == "Orchestrator"
+                && message.Role == "submit"
+                && message.Text.Contains("Fallback path completed.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(workingDirectory))
+                Directory.Delete(workingDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_WhenResponseStreamsInSmallChunks_ReportsIncrementalAssistantStreamUpdates()
     {
         // Arrange
@@ -40,7 +147,7 @@ public sealed class MagenticUIOrchestratorTests
                 maxOutputTokens: 128);
 
             var reportedMessages = new List<AgentMessage>();
-            var progress = new Progress<AgentMessage>(reportedMessages.Add);
+            var progress = new SynchronousProgress<AgentMessage>(reportedMessages.Add);
             var request = new TaskRequest(Guid.NewGuid().ToString("N"), "Give me a short answer.", workingDirectory);
 
             // Act
@@ -105,7 +212,7 @@ public sealed class MagenticUIOrchestratorTests
                 maxOutputTokens: 128);
 
             var reportedMessages = new List<AgentMessage>();
-            var progress = new Progress<AgentMessage>(reportedMessages.Add);
+            var progress = new SynchronousProgress<AgentMessage>(reportedMessages.Add);
             var request = new TaskRequest(Guid.NewGuid().ToString("N"), "Please fetch https://elbruno.com", workingDirectory);
 
             // Act
@@ -472,8 +579,9 @@ public sealed class MagenticUIOrchestratorTests
                 if (!string.IsNullOrEmpty(message.Text))
                     yield return new ChatResponseUpdate(ChatRole.Assistant, message.Text);
 
-                if (message.Contents.Count > 0)
-                    yield return new ChatResponseUpdate(ChatRole.Assistant, message.Contents);
+                var nonTextContents = message.Contents.Where(content => content is not TextContent).ToList();
+                if (nonTextContents.Count > 0)
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, nonTextContents);
             }
 
             await Task.CompletedTask;
@@ -520,8 +628,9 @@ public sealed class MagenticUIOrchestratorTests
                     }
                 }
 
-                if (message.Contents.Count > 0)
-                    yield return new ChatResponseUpdate(ChatRole.Assistant, message.Contents);
+                var nonTextContents = message.Contents.Where(content => content is not TextContent).ToList();
+                if (nonTextContents.Count > 0)
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, nonTextContents);
             }
 
             await Task.CompletedTask;
@@ -542,5 +651,84 @@ public sealed class MagenticUIOrchestratorTests
             {
                 Content = new StringContent(content)
             });
+    }
+
+    private sealed class EmptyStreamingFallbackChatClient(IReadOnlyList<ChatResponse> responses) : IChatClient
+    {
+        private readonly Queue<ChatResponse> _responses = new(responses);
+
+        public int StreamingCalls { get; private set; }
+        public int NonStreamingCalls { get; private set; }
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            NonStreamingCalls++;
+            if (_responses.Count == 0)
+                throw new InvalidOperationException("No more fallback responses were configured for the test.");
+
+            return Task.FromResult(_responses.Dequeue());
+        }
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            StreamingCalls++;
+            await Task.CompletedTask;
+            yield break;
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class HangingStreamingFallbackChatClient(IReadOnlyList<ChatResponse> responses) : IChatClient
+    {
+        private readonly Queue<ChatResponse> _responses = new(responses);
+
+        public int StreamingCalls { get; private set; }
+        public int NonStreamingCalls { get; private set; }
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            NonStreamingCalls++;
+            if (_responses.Count == 0)
+                throw new InvalidOperationException("No more fallback responses were configured for the test.");
+
+            return Task.FromResult(_responses.Dequeue());
+        }
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            StreamingCalls++;
+            await Task.Delay(TimeSpan.FromMinutes(5), CancellationToken.None);
+            yield break;
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class SynchronousProgress<T>(Action<T> onReport) : IProgress<T>
+    {
+        public void Report(T value) => onReport(value);
     }
 }

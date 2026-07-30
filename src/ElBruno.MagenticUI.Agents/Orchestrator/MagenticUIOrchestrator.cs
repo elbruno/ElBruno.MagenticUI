@@ -15,6 +15,8 @@ public sealed class MagenticUIOrchestrator : IAgentOrchestrator
 {
     private const int MaxModelToolResultCharacters = 400;
     private const int MaxScreenshotBytes = 1_500_000;
+    private static readonly TimeSpan DefaultStreamingFallbackTimeout = TimeSpan.FromSeconds(25);
+    private static readonly TimeSpan DefaultNonStreamingFallbackTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StreamingProgressInterval = TimeSpan.FromMilliseconds(150);
     private const int StreamingProgressCharacterThreshold = 24;
     private readonly IChatClient _orchestratorClient;
@@ -25,6 +27,8 @@ public sealed class MagenticUIOrchestrator : IAgentOrchestrator
     private readonly UserProxyAgent _userProxy;
     private readonly int _maxRounds;
     private readonly int _maxOutputTokens;
+    private readonly TimeSpan _streamingFallbackTimeout;
+    private readonly TimeSpan _nonStreamingFallbackTimeout;
     private readonly ILogger<MagenticUIOrchestrator> _logger;
 
     private IProgress<AgentMessage>? _currentProgress;
@@ -39,6 +43,8 @@ public sealed class MagenticUIOrchestrator : IAgentOrchestrator
         UserProxyAgent userProxy,
         int maxRounds = 15,
         int maxOutputTokens = 256,
+        TimeSpan? streamingFallbackTimeout = null,
+        TimeSpan? nonStreamingFallbackTimeout = null,
         ILogger<MagenticUIOrchestrator>? logger = null)
     {
         _orchestratorClient = orchestratorClient;
@@ -49,6 +55,8 @@ public sealed class MagenticUIOrchestrator : IAgentOrchestrator
         _userProxy = userProxy;
         _maxRounds = maxRounds;
         _maxOutputTokens = Math.Max(1, maxOutputTokens);
+        _streamingFallbackTimeout = streamingFallbackTimeout ?? DefaultStreamingFallbackTimeout;
+        _nonStreamingFallbackTimeout = nonStreamingFallbackTimeout ?? DefaultNonStreamingFallbackTimeout;
         _logger = logger ?? NullLogger<MagenticUIOrchestrator>.Instance;
     }
 
@@ -239,6 +247,12 @@ public sealed class MagenticUIOrchestrator : IAgentOrchestrator
         AIFunctionFactory.Create(WriteFileDelegate,
             name: "FileSurfer_WriteFile",
             description: "Writes text to a file in the sandboxed working directory."),
+        AIFunctionFactory.Create(CreateDirectoryDelegate,
+            name: "FileSurfer_CreateDirectory",
+            description: "Creates a directory in the sandboxed working directory."),
+        AIFunctionFactory.Create(MoveFileDelegate,
+            name: "FileSurfer_MoveFile",
+            description: "Moves or renames a file within the sandboxed working directory."),
         AIFunctionFactory.Create(_webFetcher.FetchUrl,
             name: "WebFetcher_FetchUrl",
             description: "Fetches a web page and returns its Markdown or plain-text content."),
@@ -266,6 +280,17 @@ public sealed class MagenticUIOrchestrator : IAgentOrchestrator
         [Description("Relative path to the file")] string relativePath,
         [Description("Content to write")] string content) =>
         _fileSurfer.WriteFile(relativePath, content);
+
+    [Description("Creates a directory in the working directory.")]
+    private void CreateDirectoryDelegate(
+        [Description("Relative path to the directory")] string relativePath) =>
+        _fileSurfer.CreateDirectory(relativePath);
+
+    [Description("Moves or renames a file inside the working directory.")]
+    private void MoveFileDelegate(
+        [Description("Source relative file path")] string sourceRelativePath,
+        [Description("Destination relative file path")] string destinationRelativePath) =>
+        _fileSurfer.MoveFile(sourceRelativePath, destinationRelativePath);
 
     [Description("Executes code.")]
     private async Task<string> ExecuteCodeDelegate(
@@ -488,6 +513,83 @@ public sealed class MagenticUIOrchestrator : IAgentOrchestrator
             MaxOutputTokens = _maxOutputTokens
         };
 
+        var streamedResponse = await TryCollectStreamingResponseAsync(
+            messages,
+            options,
+            progress,
+            round,
+            ct);
+
+        if (streamedResponse is null)
+        {
+            var fallbackResponse = await GetNonStreamingResponseWithTimeoutAsync(
+                messages,
+                options,
+                round,
+                ct);
+            if (!string.IsNullOrWhiteSpace(fallbackResponse.Text))
+                Report(progress, "Orchestrator", "assistant_stream", fallbackResponse.Text, round);
+            return fallbackResponse;
+        }
+
+        if (streamedResponse.Text.Length > 0 && streamedResponse.Text.Length != streamedResponse.LastReportedLength)
+            Report(progress, "Orchestrator", "assistant_stream", streamedResponse.Text, round);
+
+        if (streamedResponse.NonTextContents is not { Count: > 0 })
+            return new ChatResponse(new ChatMessage(ChatRole.Assistant, streamedResponse.Text));
+
+        var finalContents = new List<AIContent>();
+        if (!string.IsNullOrWhiteSpace(streamedResponse.Text))
+            finalContents.Add(new TextContent(streamedResponse.Text));
+
+        finalContents.AddRange(streamedResponse.NonTextContents);
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, finalContents));
+    }
+
+    private async Task<StreamingResponseState?> TryCollectStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions options,
+        IProgress<AgentMessage> progress,
+        int round,
+        CancellationToken ct)
+    {
+        using var streamingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var streamingTask = CollectStreamingResponseAsync(
+            messages,
+            options,
+            progress,
+            round,
+            streamingCts.Token);
+
+        StreamingResponseState streamedResponse;
+        try
+        {
+            streamedResponse = await streamingTask.WaitAsync(_streamingFallbackTimeout, ct);
+        }
+        catch (TimeoutException)
+        {
+            streamingCts.Cancel();
+            _logger.LogWarning(
+                "Streaming response timed out after {TimeoutMs}ms in round {Round}; falling back to non-streaming response.",
+                (int)_streamingFallbackTimeout.TotalMilliseconds,
+                round);
+            return null;
+        }
+
+        if (streamedResponse.Text.Length == 0 && streamedResponse.NonTextContents is null)
+            return null;
+
+        return streamedResponse;
+    }
+
+    private async Task<StreamingResponseState> CollectStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions options,
+        IProgress<AgentMessage> progress,
+        int round,
+        CancellationToken ct)
+    {
+
         var textBuilder = new StringBuilder();
         List<AIContent>? nonTextContents = null;
         var lastReportedLength = 0;
@@ -526,20 +628,30 @@ public sealed class MagenticUIOrchestrator : IAgentOrchestrator
             Report(progress, "Orchestrator", "assistant_stream", textBuilder.ToString(), round);
         }
 
-        if (textBuilder.Length > 0 && textBuilder.Length != lastReportedLength)
-            Report(progress, "Orchestrator", "assistant_stream", textBuilder.ToString(), round);
-
-        var finalText = textBuilder.ToString();
-        if (nonTextContents is not { Count: > 0 })
-            return new ChatResponse(new ChatMessage(ChatRole.Assistant, finalText));
-
-        var finalContents = new List<AIContent>();
-        if (!string.IsNullOrWhiteSpace(finalText))
-            finalContents.Add(new TextContent(finalText));
-
-        finalContents.AddRange(nonTextContents);
-        return new ChatResponse(new ChatMessage(ChatRole.Assistant, finalContents));
+        return new StreamingResponseState(textBuilder.ToString(), nonTextContents, lastReportedLength);
     }
+
+    private async Task<ChatResponse> GetNonStreamingResponseWithTimeoutAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions options,
+        int round,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _orchestratorClient
+                .GetResponseAsync(messages, options, ct)
+                .WaitAsync(_nonStreamingFallbackTimeout, ct);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new TimeoutException(
+                $"The orchestrator did not return a response within {(int)_nonStreamingFallbackTimeout.TotalSeconds} seconds in round {round}.",
+                ex);
+        }
+    }
+
+    private sealed record StreamingResponseState(string Text, List<AIContent>? NonTextContents, int LastReportedLength);
 
     private static void ReportComputerAction(
         IProgress<AgentMessage> progress,

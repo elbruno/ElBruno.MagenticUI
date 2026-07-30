@@ -334,7 +334,43 @@
             - prompt: "Summarize what this image shows in 3 bullets and mention any timeline insight."
             Return only the final answer.
             """,
-            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial.md#scenario-3--analyse-an-image-with-fara-computer-use")
+            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial.md#scenario-3--analyse-an-image-with-fara-computer-use"),
+        new(
+            "Scenario 4: Compare ingredient prices on the web",
+            """
+            Compare prices for these ingredients using the provided pages only:
+            - olive oil
+            - parmesan cheese
+            - spaghetti
+
+            URLs to use:
+            1) https://www.walmart.com/search?q=olive+oil
+            2) https://www.walmart.com/search?q=parmesan+cheese
+            3) https://www.walmart.com/search?q=spaghetti
+
+            Requirements:
+            - For each ingredient, provide one representative price visible on the page.
+            - Return a markdown table with columns: Ingredient, Price, Source URL.
+            - Add a short recommendation: "lowest observed total" basket note.
+            - If any page cannot be fetched, explicitly mark that row as "unavailable".
+            Return only the final answer.
+            """,
+            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial-scenario-playbooks.md#playbook-a--browser-price-comparison-ingredients"),
+        new(
+            "Scenario 5: Organize local files and summarize",
+            """
+            In the working directory:
+            1) Create folders named notes and invoices if they do not exist.
+            2) Move *.txt files starting with notes_ into notes/.
+            3) Move *.txt files starting with invoice_ into invoices/.
+            4) Read the moved files and create summary.txt in the root working directory with:
+               - file counts per folder
+               - invoice total amount
+               - list of note filenames
+            5) Show the final directory tree in the answer.
+            Return only the final answer.
+            """,
+            "https://github.com/elbruno/ElBruno.MagenticUI/blob/master/docs/tutorial-scenario-playbooks.md#playbook-b--file-organization--summary-output")
     ];
 
     private const string TaskPlaceholder =
