@@ -1,0 +1,301 @@
+@page "/predict"
+@page "/fara-visual-grounding"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using ElBruno.MagenticUI.App
+@inject IScreenshotPredictionService PredictionService
+@inject IWebHostEnvironment HostEnvironment
+
+<PageTitle>Screenshot prediction · MagenticUI</PageTitle>
+
+<div class="container-fluid py-4 prediction-page">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+        <div>
+            <h1 class="h3 mb-1">Screenshot prediction</h1>
+            <p class="text-muted mb-0">Describe your goal and inspect Fara's predicted action from an uploaded screenshot.</p>
+        </div>
+        <span class="badge @StatusClass">@StatusText</span>
+    </div>
+
+    <div class="alert alert-info" role="status">
+        <strong>Prediction-only mode.</strong> Results describe predicted actions and coordinates; this page never opens a browser or executes actions.
+    </div>
+
+    @if (modelCacheStatus is { IsCached: false })
+    {
+        <div class="alert alert-warning" role="status">
+            <strong>Fara model not downloaded yet.</strong> The first prediction will automatically download the
+            Fara1.5-9B ONNX model from Hugging Face. This is a multi-gigabyte download and can take several minutes
+            depending on your connection — subsequent predictions will be fast once it's cached locally.
+        </div>
+    }
+
+    @if (providerStatus is not null && !providerStatus.IsGpu)
+    {
+        <div class="alert alert-warning" role="status">
+            <strong>Running on CPU (@providerStatus.Provider).</strong> Fara1.5-9B is a 9-billion-parameter vision
+            model, so a prediction takes several minutes on CPU. Keep this tab open until it finishes.
+            <span class="d-block mt-1 small">@providerStatus.Detail</span>
+        </div>
+    }
+    else if (providerStatus is not null)
+    {
+        <div class="alert alert-success py-2" role="status">
+            <strong>GPU acceleration active (@providerStatus.Provider).</strong> @providerStatus.Detail
+        </div>
+    }
+
+    <div class="row g-4">
+        <div class="col-12 col-lg-5">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h2 class="h5">Input</h2>
+                    <label class="form-label" for="goal">Goal</label>
+                    <textarea id="goal" class="form-control mb-3" rows="3"
+                              @bind="goal" @bind:event="oninput"
+                              placeholder="Example: Find the primary sign-in button"></textarea>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        @foreach (var example in Examples)
+                        {
+                            <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => goal = example">@example</button>
+                        }
+                    </div>
+                    <h3 class="h6">Ready-to-use samples</h3>
+                    <div class="row g-2 mb-3">
+                        @foreach (var sample in Samples)
+                        {
+                            <div class="col-12 col-xl-6">
+                                <button type="button" class="btn btn-light border text-start w-100 p-2 sample-card"
+                                        @onclick="() => SelectSampleAsync(sample)" disabled="@isBusy">
+                                    <img src="@sample.AssetPath" alt="@sample.Name" class="sample-thumbnail" />
+                                    <span class="d-block fw-semibold mt-1">@sample.Name</span>
+                                    <small class="text-muted">@sample.Width × @sample.Height · Use sample</small>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                    <label class="form-label" for="screenshot">Screenshot</label>
+                    <InputFile id="screenshot" OnChange="OnFileSelected" accept="image/png,image/jpeg,image/webp" />
+                    @if (selectedFileName is not null)
+                    {
+                        <small class="d-block text-muted mt-2">@selectedFileName (@selectedFileSize KB)</small>
+                    }
+                    @if (validationMessage is not null)
+                    {
+                        <div class="text-danger small mt-2" role="alert">@validationMessage</div>
+                    }
+                    <div class="d-flex gap-2 mt-4">
+                        <button type="button" class="btn btn-primary" @onclick="PredictAsync"
+                                disabled="@(isBusy || imageBytes is null)">
+                            @(isBusy ? BusyLabel : "Predict action")
+                        </button>
+                        <button type="button" class="btn btn-outline-danger" @onclick="Cancel" disabled="@(!isBusy)">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-lg-7">
+            @if (imageBytes is not null)
+            {
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header">Screenshot preview</div>
+                    <div class="card-body">
+                        <div class="coordinate-canvas">
+                            <img src="@previewUrl" alt="Uploaded screenshot preview" />
+                            @if (lastResult is not null)
+                            {
+                                @foreach (var prediction in lastResult.Predictions)
+                                {
+                                    <div class="coordinate-marker" style="@MarkerStyle(prediction)" title="@prediction.Label">
+                                        <span>@prediction.Label</span>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+            @if (lastResult is not null)
+            {
+                <div class="card shadow-sm">
+                    <div class="card-header">Structured result</div>
+                    <div class="card-body">
+                        @if (!string.IsNullOrWhiteSpace(lastResult.Summary))
+                        {
+                            <p class="mb-3">@lastResult.Summary</p>
+                        }
+                        @if (lastResult.Action is not null)
+                        {
+                            <div class="alert alert-secondary py-2">
+                                <strong>Action:</strong> @lastResult.Action.Type
+                                <div class="small mt-1">@ActionArguments(lastResult.Action)</div>
+                            </div>
+                        }
+                        @if (lastResult.Predictions.Count > 0)
+                        {
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead><tr><th>Label</th><th>Coordinates</th><th>Confidence</th></tr></thead>
+                                <tbody>
+                                    @foreach (var item in lastResult.Predictions)
+                                    {
+                                        <tr><td>@item.Label</td><td>@($"{item.X:0.##}%, {item.Y:0.##}% · {item.Width:0.##}% × {item.Height:0.##}%")</td><td>@($"{item.Confidence:P0}")</td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        }
+                        @if (lastResult.Diagnostics.Count > 0)
+                        {
+                            <h3 class="h6 mt-3">Diagnostics</h3>
+                            <ul class="small mb-0">@foreach (var diagnostic in lastResult.Diagnostics) { <li>@diagnostic</li> }</ul>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(lastResult.RawResponse))
+                        {
+                            <details class="mt-3">
+                                <summary class="small">Raw model response</summary>
+                                <pre class="small mt-2 mb-0">@lastResult.RawResponse</pre>
+                            </details>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private static readonly SampleImage[] Samples =
+    [
+        new("Shopping cart", "/fara-samples/sample-shopping-site.jpg", "fara-samples/sample-shopping-site.jpg",
+            "Locate the Proceed To Checkout button, but do not click it.", 1294, 771, "image/jpeg"),
+        new("GitHub issue", "/fara-samples/github-issue-demo.png", "fara-samples/github-issue-demo.png",
+            "assign this issue to an ai agent", 2378, 1211, "image/png")
+    ];
+    private static readonly string[] Examples = ["Find the sign-in button", "Locate the search field", "Identify the main navigation"];
+    private const long MaxFileSize = 10 * 1024 * 1024;
+    private string goal = string.Empty;
+    private byte[]? imageBytes;
+    private string? contentType;
+    private string? selectedFileName;
+    private string? previewUrl;
+    private string? validationMessage;
+    private ScreenshotPredictionResult? lastResult;
+    private CancellationTokenSource? predictionCts;
+    private bool isBusy;
+    private FaraModelCacheStatus? modelCacheStatus;
+    private FaraExecutionProviderStatus? providerStatus;
+
+    private string StatusText => isBusy ? "Predicting…" : lastResult is not null ? "Ready" : "Idle";
+    private string StatusClass => isBusy ? "bg-primary" : lastResult is not null ? "bg-success" : "bg-secondary";
+    private string selectedFileSize => imageBytes is null ? "0" : (imageBytes.Length / 1024d).ToString("0");
+    private string BusyLabel => modelCacheStatus is { IsCached: false }
+        ? "Downloading model…"
+        : "Predicting…";
+
+    protected override void OnInitialized()
+    {
+        modelCacheStatus = PredictionService.GetModelCacheStatus();
+        providerStatus = PredictionService.GetExecutionProviderStatus();
+    }
+
+    private async Task SelectSampleAsync(SampleImage sample)
+    {
+        validationMessage = null;
+        var path = Path.Combine(HostEnvironment.WebRootPath, sample.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(path))
+        {
+            validationMessage = $"Sample image is unavailable: {sample.Name}.";
+            return;
+        }
+
+        imageBytes = await File.ReadAllBytesAsync(path);
+        contentType = sample.ContentType;
+        selectedFileName = sample.Name;
+        previewUrl = $"data:{contentType};base64,{Convert.ToBase64String(imageBytes)}";
+        goal = sample.Prompt;
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs args)
+    {
+        validationMessage = null;
+        var file = args.File;
+        if (file is null || !new[] { "image/png", "image/jpeg", "image/webp" }.Contains(file.ContentType, StringComparer.OrdinalIgnoreCase))
+        {
+            validationMessage = "Choose a PNG, JPEG, or WebP image.";
+            return;
+        }
+        if (file.Size > MaxFileSize)
+        {
+            validationMessage = "The screenshot must be 10 MB or smaller.";
+            return;
+        }
+        await using var stream = file.OpenReadStream(MaxFileSize);
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        imageBytes = buffer.ToArray();
+        contentType = file.ContentType;
+        selectedFileName = file.Name;
+        previewUrl = $"data:{contentType};base64,{Convert.ToBase64String(imageBytes)}";
+    }
+
+    private async Task PredictAsync()
+    {
+        if (isBusy) return;
+        validationMessage = string.IsNullOrWhiteSpace(goal) ? "Enter a goal." : imageBytes is null ? "Upload a screenshot." : null;
+        if (validationMessage is not null) return;
+        isBusy = true;
+        predictionCts?.Dispose();
+        predictionCts = new CancellationTokenSource();
+        try
+        {
+            var result = await PredictionService.PredictAsync(new ScreenshotPredictionRequest(imageBytes!, contentType!, goal.Trim()), predictionCts.Token);
+            lastResult = result;
+        }
+        catch (OperationCanceledException) { }
+        catch (FaraVisionConfigurationException ex)
+        {
+            validationMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            validationMessage = $"Prediction failed: {ex.Message}";
+        }
+        finally
+        {
+            isBusy = false;
+            modelCacheStatus = PredictionService.GetModelCacheStatus();
+            providerStatus = PredictionService.GetExecutionProviderStatus();
+        }
+    }
+
+    private void Cancel() => predictionCts?.Cancel();
+    private static string MarkerStyle(CoordinatePrediction p) =>
+        $"left:{p.X:0.###}%;top:{p.Y:0.###}%;width:{p.Width:0.###}%;height:{p.Height:0.###}%;";
+
+    private static string ActionArguments(ElBruno.MagenticUI.Agents.Models.FaraAction action) =>
+        action.Type switch
+        {
+            ElBruno.MagenticUI.Agents.Models.FaraActionType.Type => $"Text: {action.Text}",
+            ElBruno.MagenticUI.Agents.Models.FaraActionType.Key => $"Keys: {string.Join(" + ", action.Keys ?? [])}",
+            ElBruno.MagenticUI.Agents.Models.FaraActionType.Scroll => $"Pixels: {action.Pixels:0.##}",
+            ElBruno.MagenticUI.Agents.Models.FaraActionType.VisitUrl => $"URL: {action.Url}",
+            _ when action.Coordinate is not null => $"Coordinate: ({action.Coordinate.X}, {action.Coordinate.Y})",
+            _ => "No arguments"
+        };
+
+    public async ValueTask DisposeAsync()
+    {
+        if (predictionCts is not null) await predictionCts.CancelAsync();
+        predictionCts?.Dispose();
+    }
+
+    private sealed record SampleImage(
+        string Name,
+        string AssetPath,
+        string RelativePath,
+        string Prompt,
+        int Width,
+        int Height,
+        string ContentType);
+}

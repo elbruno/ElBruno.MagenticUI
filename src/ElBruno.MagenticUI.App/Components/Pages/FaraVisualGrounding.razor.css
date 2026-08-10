@@ -1,0 +1,7 @@
+.coordinate-canvas { position: relative; width: 100%; overflow: hidden; background: #f8f9fa; }
+.coordinate-canvas img { display: block; width: 100%; height: auto; }
+.coordinate-marker { position: absolute; border: 2px solid #dc3545; background: rgb(220 53 69 / 12%); pointer-events: none; }
+.coordinate-marker span { position: absolute; top: -1.5rem; left: -2px; background: #dc3545; color: #fff; font-size: .7rem; padding: .1rem .3rem; white-space: nowrap; }
+.sample-card { min-height: 8rem; }
+.sample-thumbnail { display: block; width: 100%; height: 5rem; object-fit: cover; }
+@media (max-width: 576px) { .coordinate-marker span { font-size: .6rem; top: -1.2rem; } }

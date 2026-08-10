@@ -1,6 +1,8 @@
 using ElBruno.LocalLLMs;
 using ElBruno.LocalLLMs.Diagnostics;
+using ElBruno.LocalLLMs.BlazorComponents.Extensions;
 using ElBruno.MagenticUI.Agents.Agents;
+using ElBruno.MagenticUI.Agents.Configuration;
 using ElBruno.MagenticUI.Agents.Orchestrator;
 using ElBruno.MagenticUI.Agents.Tools;
 using ElBruno.MagenticUI.App;
@@ -42,6 +44,13 @@ builder.Services
         sourceName: genAiActivitySourceName,
         configure: telemetry => telemetry.EnableSensitiveData = builder.Environment.IsDevelopment());
 
+var faraVisionOptions = new FaraVisionOptions();
+builder.Configuration.GetSection(FaraVisionOptions.SectionName).Bind(faraVisionOptions);
+builder.Services.AddFaraVisionLLM(faraVisionOptions);
+
+// ── Blazor components for model management (Settings page) ────────────────
+builder.Services.AddLocalLLMsBlazorComponents();
+
 // ── Tools ─────────────────────────────────────────────────────────────────
 var configuredWorkDir = builder.Configuration["LocalLLMs:WorkingDirectory"];
 var workDir = string.IsNullOrWhiteSpace(configuredWorkDir)
@@ -75,6 +84,8 @@ builder.Services.AddTransient<IAgentOrchestrator>(sp => new MagenticUIOrchestrat
     maxOutputTokens: builder.Configuration.GetValue("LocalLLMs:MaxOutputTokens", 256),
     logger: sp.GetService<ILogger<MagenticUIOrchestrator>>()));
 builder.Services.AddScoped<AgentSessionService>();
+builder.Services.AddSingleton<FaraActionParser>();
+builder.Services.AddScoped<IScreenshotPredictionService, FaraScreenshotPredictionService>();
 
 // ── Blazor ─────────────────────────────────────────────────────────────────
 builder.Services.AddRazorComponents()
@@ -89,7 +100,7 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-app.UseStaticFiles();
+app.MapStaticAssets();
 app.UseAntiforgery();
 
 app.MapRazorComponents<App>()

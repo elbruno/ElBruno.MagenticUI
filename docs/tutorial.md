@@ -248,6 +248,63 @@ Current validated behavior in this environment (Windows, this run):
 
 ---
 
+## Scenario 3 — Fara Visual Grounding (Prediction Only)
+
+**Goal:** Use a screenshot and a safe goal to preview the next computer-use action
+without allowing the app to operate a browser.
+
+### Setup
+
+Configure the Fara1.5-9B model in
+`src/ElBruno.MagenticUI.App/appsettings.json` (or use the model settings exposed by
+the app):
+
+```json
+"LocalLLMs": {
+  "FaraVision": {
+    "ModelPath": "C:\\Models\\Fara1.5-9B"
+  }
+}
+```
+
+With `ElBruno.LocalLLMs` 0.20.9, Fara auto-downloads the published multimodal ONNX
+package to the LocalLLMs cache on first prediction. You can still set `ModelPath` to
+use a local conversion instead.
+See [fara-onnx-setup.md](fara-onnx-setup.md) for conversion steps.
+
+The model directory must already contain the extracted ONNX model. Do not store model
+files in the repository; they are several gigabytes. Restart the app after changing
+the model path.
+
+### Safe example
+
+1. Open **Fara Visual Grounding** at
+   `https://localhost:7127/fara-visual-grounding`.
+2. Under **Ready-to-use samples**, select **Shopping cart** or **GitHub issue**.
+   Each sample includes a safe goal and shows its dimensions. You can still upload
+   your own PNG, JPEG, or WebP screenshot at any time.
+3. To use a sample, select one and review the prefilled goal:
+   ```
+   Locate the Proceed To Checkout button, but do not click it.
+   ```
+4. Click **Predict action**. The sample remains available as a static asset, while
+   uploads continue to be handled independently.
+
+The result shows the typed action (for example `left_click`) and its predicted
+coordinates, together with a marker over the screenshot. The marker is scaled to the
+displayed image even when the browser resizes it. The raw model response is available
+in the diagnostics section.
+
+> **Safety boundary:** This page performs prediction and visualization only. It never
+> clicks, types, submits forms, sends messages, visits URLs, or otherwise controls a
+> real browser. A future sandboxed executor must add explicit approval before any
+> external action.
+
+If the model returns a malformed or unsupported action, the page reports the parsing
+error and leaves the last successful result visible.
+
+---
+
 ## Additional Guides
 
 - [Human-in-the-Loop](./tutorial-human-in-the-loop.md)

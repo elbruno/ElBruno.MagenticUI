@@ -7,16 +7,33 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ElBruno.LocalLLMs" Version="0.20.4" />
-            <!-- Direct reference required: OnnxRuntimeGenAI's buildTransitive/ omits win-x64,
-              so the native onnxruntime-genai.dll is only copied when referenced directly. -->
-            <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.14.1" />
+    <PackageReference Include="ElBruno.LocalLLMs" Version="0.20.10" />
+    <!-- GPU note: Microsoft.ML.OnnxRuntimeGenAI.Cuda 0.15.x is built against ONNX Runtime 1.28,
+         whose CUDA execution provider requires the CUDA 13 runtime (cublasLt64_13.dll) and an
+         NVIDIA driver >= 580. Referencing it on a machine that only has CUDA 12 makes the native
+         provider load fail with an access violation that kills the process, so the CPU package is
+         used here. CudaRuntimeResolver detects a usable CUDA 13 runtime at startup and the app
+         only requests the CUDA provider when one is present.
+         Direct reference required: OnnxRuntimeGenAI's buildTransitive/ omits win-x64, so the
+         native onnxruntime-genai.dll is only copied when referenced directly.
+         See docs/fara-execution-providers.md. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.15.1" />
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.3" />
-  </ItemGroup>
+    <PackageReference Include="ElBruno.LocalLLMs.BlazorComponents" Version="0.20.10" />  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ElBruno.MagenticUI.Agents\ElBruno.MagenticUI.Agents.csproj" />
     <ProjectReference Include="..\ElBruno.MagenticUI.ServiceDefaults\ElBruno.MagenticUI.ServiceDefaults.csproj" />
   </ItemGroup>
+
+  <!-- onnxruntime-genai.dll is flattened to the output root, but it loads onnxruntime.dll and
+       onnxruntime_providers_*.dll through the OS loader, which searches its own directory.
+       Copy the win-x64 natives alongside it so the CUDA provider can be found. -->
+  <Target Name="CopyOnnxWinNativesToOutputRoot" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <ItemGroup>
+      <OnnxWinNative Include="$(OutputPath)runtimes\win-x64\native\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(OnnxWinNative)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

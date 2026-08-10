@@ -38,3 +38,12 @@ wwwroot/dist/
 .squad/.cache/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+
+# Local ONNX model files and in-progress downloads (multi-GB — never commit)
+*.onnx
+*.onnx.data
+*.partial
+*.partial.json
+fara1.5-9b/
+magenticbrain/
+phi-3.5-mini-instruct/
