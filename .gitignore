@@ -47,3 +47,6 @@ wwwroot/dist/
 fara1.5-9b/
 magenticbrain/
 phi-3.5-mini-instruct/
+
+# Local-only agent backups
+*.local-backup
