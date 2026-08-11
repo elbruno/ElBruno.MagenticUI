@@ -295,6 +295,14 @@ coordinates, together with a marker over the screenshot. The marker is scaled to
 displayed image even when the browser resizes it. The raw model response is available
 in the diagnostics section.
 
+The **Generate annotated result image** checkbox (checked by default) additionally
+renders a copy of the screenshot with the predicted action baked in as an overlay —
+a marker with a numbered step badge, a dashed connector for drag actions, and an
+instruction label such as "1. Right-click here" or `Type: "..."`. This annotated image
+is shown as the process result instead of the raw preview, so the next action is
+immediately obvious without reading the structured result panel. Uncheck the box to
+skip rendering and fall back to the plain preview with an HTML marker overlay.
+
 > **Safety boundary:** This page performs prediction and visualization only. It never
 > clicks, types, submits forms, sends messages, visits URLs, or otherwise controls a
 > real browser. A future sandboxed executor must add explicit approval before any

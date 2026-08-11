@@ -5,7 +5,8 @@ namespace ElBruno.MagenticUI.App;
 public sealed record ScreenshotPredictionRequest(
     byte[] ImageBytes,
     string ContentType,
-    string Goal);
+    string Goal,
+    bool GenerateAnnotatedOverlay = true);
 
 public sealed record CoordinatePrediction(
     string Label,
@@ -20,7 +21,9 @@ public sealed record ScreenshotPredictionResult(
     IReadOnlyList<string> Diagnostics,
     string? Summary = null,
     FaraAction? Action = null,
-    string? RawResponse = null);
+    string? RawResponse = null,
+    byte[]? AnnotatedImage = null,
+    string? AnnotatedImageContentType = null);
 
 /// <summary>
 /// Reports whether the Fara model is already cached locally so the UI can

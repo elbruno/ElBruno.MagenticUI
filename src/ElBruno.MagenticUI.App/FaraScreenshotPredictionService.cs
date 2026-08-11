@@ -95,6 +95,20 @@ public sealed class FaraScreenshotPredictionService : IScreenshotPredictionServi
                 ? Array.Empty<CoordinatePrediction>()
                 : [CreateCoordinatePrediction(action)];
 
+            byte[]? annotatedImage = null;
+            if (request.GenerateAnnotatedOverlay)
+            {
+                try
+                {
+                    annotatedImage = ScreenshotOverlayRenderer.Render(request.ImageBytes, action, request.Goal);
+                }
+                catch
+                {
+                    // Overlay rendering must never fail the underlying prediction result.
+                    annotatedImage = null;
+                }
+            }
+
             return new ScreenshotPredictionResult(
                 predictions,
                 action.Coordinate is null
@@ -104,7 +118,9 @@ public sealed class FaraScreenshotPredictionService : IScreenshotPredictionServi
                        "Prediction-only mode: no browser action was executed."],
                 DescribeAction(action),
                 action,
-                response.Text);
+                response.Text,
+                annotatedImage,
+                annotatedImage is not null ? "image/png" : null);
         }
 
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

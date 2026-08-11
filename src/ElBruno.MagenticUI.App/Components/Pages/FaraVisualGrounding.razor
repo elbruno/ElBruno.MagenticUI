@@ -84,6 +84,12 @@
                     {
                         <div class="text-danger small mt-2" role="alert">@validationMessage</div>
                     }
+                    <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" id="overlay" @bind="generateAnnotatedOverlay" />
+                        <label class="form-check-label" for="overlay">
+                            Generate annotated result image (highlights where to click and what to do)
+                        </label>
+                    </div>
                     <div class="d-flex gap-2 mt-4">
                         <button type="button" class="btn btn-primary" @onclick="PredictAsync"
                                 disabled="@(isBusy || imageBytes is null)">
@@ -95,7 +101,17 @@
             </div>
         </div>
         <div class="col-12 col-lg-7">
-            @if (imageBytes is not null)
+            @if (lastResult?.AnnotatedImage is { Length: > 0 })
+            {
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header">Annotated result</div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-2">Overlay showing where to click and what to do for this prediction.</p>
+                        <img class="w-100" src="@AnnotatedImageUrl" alt="Annotated result with instructions" />
+                    </div>
+                </div>
+            }
+            else if (imageBytes is not null)
             {
                 <div class="card shadow-sm mb-4">
                     <div class="card-header">Screenshot preview</div>
@@ -183,6 +199,7 @@
     private ScreenshotPredictionResult? lastResult;
     private CancellationTokenSource? predictionCts;
     private bool isBusy;
+    private bool generateAnnotatedOverlay = true;
     private FaraModelCacheStatus? modelCacheStatus;
     private FaraExecutionProviderStatus? providerStatus;
 
@@ -192,6 +209,9 @@
     private string BusyLabel => modelCacheStatus is { IsCached: false }
         ? "Downloading model…"
         : "Predicting…";
+    private string? AnnotatedImageUrl => lastResult?.AnnotatedImage is { Length: > 0 } bytes
+        ? $"data:{lastResult.AnnotatedImageContentType ?? "image/png"};base64,{Convert.ToBase64String(bytes)}"
+        : null;
 
     protected override void OnInitialized()
     {
@@ -249,7 +269,9 @@
         predictionCts = new CancellationTokenSource();
         try
         {
-            var result = await PredictionService.PredictAsync(new ScreenshotPredictionRequest(imageBytes!, contentType!, goal.Trim()), predictionCts.Token);
+            var result = await PredictionService.PredictAsync(
+                new ScreenshotPredictionRequest(imageBytes!, contentType!, goal.Trim(), generateAnnotatedOverlay),
+                predictionCts.Token);
             lastResult = result;
         }
         catch (OperationCanceledException) { }
