@@ -4,11 +4,15 @@ This page explains how MagenticUI chooses the ONNX Runtime execution provider fo
 Fara1.5-9B vision model, why it may run on CPU, and what is required to enable GPU
 acceleration.
 
-> Requires `ElBruno.LocalLLMs` **0.20.11+**, which added execution-provider preflight and
+> Requires `ElBruno.LocalLLMs` **0.21.0+**. 0.20.11 added execution-provider preflight and
 > safe fallback ([#45](https://github.com/elbruno/ElBruno.LocalLLMs/issues/45)), correct
 > multimodal `max_length` handling ([#44](https://github.com/elbruno/ElBruno.LocalLLMs/issues/44)),
 > and the `EnvironmentDashboard` provider panel plus open-folder action
-> ([#46](https://github.com/elbruno/ElBruno.LocalLLMs/issues/46)).
+> ([#46](https://github.com/elbruno/ElBruno.LocalLLMs/issues/46)), but shipped a mismatched
+> assembly version ([#49](https://github.com/elbruno/ElBruno.LocalLLMs/issues/49)) and a vision
+> input-length probe that rejected every image prediction
+> ([#51](https://github.com/elbruno/ElBruno.LocalLLMs/issues/51)). Both are fixed in 0.21.0, so
+> do not pin 0.20.11.
 
 ## Configuration
 
@@ -105,35 +109,3 @@ normalized to `null` by `FaraVisionServiceExtensions`: an empty string is *not* 
 unset, because the downloader combines it with the model id and produces a **relative** cache
 path next to the running app, which re-downloads the ~10 GB model on every request.
 
-## Known upstream issues in ElBruno.LocalLLMs 0.20.11
-
-Two defects were found in 0.20.11 during validation. Both are filed upstream with suggested
-fixes, and both workarounds should be **deleted** once a fixed package ships.
-
-### elbruno/ElBruno.LocalLLMs#49 - assembly version mismatch (worked around)
-
-The 0.20.11 core package ships `ElBruno.LocalLLMs.dll` stamped `AssemblyVersion 0.20.9.0`,
-while `ElBruno.LocalLLMs.BlazorComponents` 0.20.11 references `0.20.11.0`. .NET only rolls
-assembly references *forward*, so the app fails at startup with a misleading
-`FileNotFoundException: ElBruno.LocalLLMs, Version=0.20.11.0` even though the DLL is present.
-
-Workaround: `src/ElBruno.MagenticUI.App/LocalLLMsAssemblyVersionShim.cs` registers an
-`AssemblyLoadContext.Default.Resolving` handler from a `[ModuleInitializer]`. The module
-initializer placement is required - code inside `Main` runs too late, because JIT-ing
-`Program.<Main>$` already triggers the failing bind.
-
-### elbruno/ElBruno.LocalLLMs#51 - vision predictions fail (no workaround)
-
-Every prediction that includes an image fails with:
-
-```
-max_length (2147483647) cannot be greater than model context_length (32768)
-```
-
-`OnnxVisionModel.ResolveVisionInputTokenCount` creates a probe generator with
-`max_length = int.MaxValue`, which ONNX Runtime GenAI rejects. The check exists in both
-GenAI 0.14.1 and 0.15.1, so it cannot be avoided by pinning an older runtime, and there is no
-public option to skip the probe. The real generation path is fine - only the probe is broken.
-
-`FaraScreenshotPredictionService` maps this native error to a clear message pointing at the
-issue instead of surfacing the raw text. Remove that mapping when the fix ships.

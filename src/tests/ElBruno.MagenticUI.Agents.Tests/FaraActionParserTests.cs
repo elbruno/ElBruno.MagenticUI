@@ -143,5 +143,104 @@ public sealed class FaraActionParserTests
         Assert.Equal(FaraActionType.LeftClick, result.Action!.Type);
         Assert.Equal(new FaraCoordinate(640, 480), result.Action.Coordinate);
     }
+
+    [Fact]
+    public void ParsesNativeCallSyntaxAfterReasoningProse()
+    {
+        // Arrange
+        // This is the verbatim shape Fara1.5-9B returns for the GitHub issue sample.
+        const string response =
+            "To assign the issue to an AI agent, I need to open the assignment dropdown. " +
+            "The 'Assignees' button is the appropriate control for this action.\nleft_click(178, 594)";
+
+        // Act
+        var result = _parser.Parse(response);
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Equal(FaraActionType.LeftClick, result.Action!.Type);
+        Assert.Equal(new FaraCoordinate(178, 594), result.Action.Coordinate);
+    }
+
+    [Theory]
+    [InlineData("right_click(10, 20)", FaraActionType.RightClick, 10, 20)]
+    [InlineData("double_click(1, 2)", FaraActionType.DoubleClick, 1, 2)]
+    [InlineData("computer.left_click(300, 400)", FaraActionType.LeftClick, 300, 400)]
+    public void ParsesNativeCoordinateCalls(string response, FaraActionType expected, int x, int y)
+    {
+        // Act
+        var result = _parser.Parse(response);
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Equal(expected, result.Action!.Type);
+        Assert.Equal(new FaraCoordinate(x, y), result.Action.Coordinate);
+    }
+
+    [Fact]
+    public void ParsesNativeDragCall()
+    {
+        // Act
+        var result = _parser.Parse("left_click_drag(10, 20, 30, 40)");
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Equal(FaraActionType.LeftClickDrag, result.Action!.Type);
+        Assert.Equal(new FaraCoordinate(10, 20), result.Action.Coordinate);
+        Assert.Equal(new FaraCoordinate(30, 40), result.Action.EndCoordinate);
+    }
+
+    [Fact]
+    public void ParsesNativeStringAndKeyCalls()
+    {
+        // Act
+        var type = _parser.Parse("""type("hello world")""");
+        var url = _parser.Parse("""visit_url('https://example.com')""");
+        var key = _parser.Parse("""key("ctrl", "c")""");
+
+        // Assert
+        Assert.Equal("hello world", type.Action!.Text);
+        Assert.Equal("https://example.com", url.Action!.Url);
+        Assert.Equal(["ctrl", "c"], key.Action!.Keys);
+    }
+
+    [Theory]
+    [InlineData("scroll(-300)", -300)]
+    [InlineData("scroll(500, 400, 250)", 250)]
+    public void ParsesNativeScrollCall(string response, double expectedPixels)
+    {
+        // Act
+        var result = _parser.Parse(response);
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Equal(FaraActionType.Scroll, result.Action!.Type);
+        Assert.Equal(expectedPixels, result.Action.Pixels);
+    }
+
+    [Fact]
+    public void UsesTheLastNativeCallWhenReasoningMentionsEarlierOnes()
+    {
+        // Arrange
+        const string response = "I could use scroll(-200) first, but the button is visible.\nleft_click(5, 6)";
+
+        // Act
+        var result = _parser.Parse(response);
+
+        // Assert
+        Assert.Equal(FaraActionType.LeftClick, result.Action!.Type);
+        Assert.Equal(new FaraCoordinate(5, 6), result.Action.Coordinate);
+    }
+
+    [Fact]
+    public void StillFailsWhenNoActionIsPresent()
+    {
+        // Act
+        var result = _parser.Parse("I am not sure which element to click.");
+
+        // Assert
+        Assert.False(result.Success);
+        Assert.Null(result.Action);
+    }
 }
 

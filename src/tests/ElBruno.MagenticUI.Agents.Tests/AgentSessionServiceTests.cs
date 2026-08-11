@@ -13,7 +13,7 @@ public sealed class AgentSessionServiceTests
     public async Task CancelTask_SetsCancellingState_BeforeReturningToIdle()
     {
         // Arrange
-        using var cancellationObserved = new ManualResetEventSlim(false);
+        var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var services = new ServiceCollection();
         services.AddSingleton<IAgentOrchestrator>(new GatedCancellationOrchestrator(cancellationObserved));
         services.AddSingleton(new UserProxyAgent());
@@ -27,16 +27,16 @@ public sealed class AgentSessionServiceTests
 
         // Act
         await session.StartTaskAsync("Run a long task");
-        var running = SpinWait.SpinUntil(() => session.Status == AgentTaskStatus.Running, TimeSpan.FromSeconds(2));
-        Assert.True(running);
+        var running = await WaitForStatusAsync(session, AgentTaskStatus.Running, TimeSpan.FromSeconds(10));
+        Assert.True(running, $"Expected Running but observed {session.Status}.");
 
         session.CancelTask();
 
         // Assert
         Assert.Equal(AgentTaskStatus.Cancelling, session.Status);
-        cancellationObserved.Set();
-        var completed = SpinWait.SpinUntil(() => session.Status == AgentTaskStatus.Idle, TimeSpan.FromSeconds(5));
-        Assert.True(completed);
+        cancellationObserved.SetResult();
+        var completed = await WaitForStatusAsync(session, AgentTaskStatus.Idle, TimeSpan.FromSeconds(30));
+        Assert.True(completed, $"Expected Idle but observed {session.Status} (error: {session.LastError ?? "none"}).");
         await session.DisposeAsync();
     }
 
@@ -62,17 +62,36 @@ public sealed class AgentSessionServiceTests
         await session.StartTaskAsync("Run a long task");
 
         // Assert
-        var completed = SpinWait.SpinUntil(
-            () => session.Status is AgentTaskStatus.Error,
-            TimeSpan.FromSeconds(5));
+        var completed = await WaitForStatusAsync(session, AgentTaskStatus.Error, TimeSpan.FromSeconds(30));
 
-        Assert.True(completed);
+        Assert.True(completed, $"Expected Error but observed {session.Status}.");
         Assert.Equal(AgentTaskStatus.Error, session.Status);
         Assert.Contains("timed out", session.LastError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         await session.DisposeAsync();
     }
 
-    private sealed class GatedCancellationOrchestrator(ManualResetEventSlim releaseAfterCancellation) : IAgentOrchestrator
+    private static async Task<bool> WaitForStatusAsync(
+        AgentSessionService session,
+        AgentTaskStatus expected,
+        TimeSpan timeout)
+    {
+        // Polls asynchronously instead of blocking a thread-pool thread, which otherwise
+        // starves the background orchestrator task when the whole suite runs in parallel.
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (session.Status == expected)
+            {
+                return true;
+            }
+
+            await Task.Delay(25);
+        }
+
+        return session.Status == expected;
+    }
+
+    private sealed class GatedCancellationOrchestrator(TaskCompletionSource releaseAfterCancellation) : IAgentOrchestrator
     {
         public async Task RunAsync(
             TaskRequest request,
@@ -87,8 +106,9 @@ public sealed class AgentSessionServiceTests
             catch (OperationCanceledException)
             {
                 // Keep the run alive until the test has observed the Cancelling state,
-                // so the assertion cannot race the transition back to Idle.
-                releaseAfterCancellation.Wait(TimeSpan.FromSeconds(5), CancellationToken.None);
+                // so the assertion cannot race the transition back to Idle. Awaiting
+                // (rather than blocking) keeps the thread pool free while other tests run.
+                await releaseAfterCancellation.Task.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
                 throw;
             }
         }

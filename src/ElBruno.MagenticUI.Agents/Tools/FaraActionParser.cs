@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ElBruno.MagenticUI.Agents.Models;
 
 namespace ElBruno.MagenticUI.Agents.Tools;
@@ -11,6 +12,15 @@ public sealed class FaraActionParser
         PropertyNameCaseInsensitive = true
     };
 
+    /// <summary>
+    /// Matches Fara's native tool-call syntax, optionally namespaced (e.g. <c>computer.scroll(-300)</c>).
+    /// <c>left_click_drag</c> precedes <c>left_click</c> so the longer name wins.
+    /// </summary>
+    private static readonly Regex CallSyntaxPattern = new(
+        @"(?:^|[^\w])(?<name>left_click_drag|left_click|right_click|double_click|visit_url|type|key|scroll)\s*\(\s*(?<args>[^()]*?)\s*\)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Multiline,
+        TimeSpan.FromSeconds(1));
+
     public FaraActionParseResult Parse(string rawResponse)
     {
         if (string.IsNullOrWhiteSpace(rawResponse))
@@ -18,7 +28,13 @@ public sealed class FaraActionParser
 
         var json = ExtractJson(rawResponse);
         if (json is null)
-            return FaraActionParseResult.Failed(rawResponse, "The Fara response did not contain a JSON action.");
+        {
+            // Fara is trained to emit its native tool-call syntax (for example
+            // "left_click(178, 594)") and often ignores a JSON instruction, usually after a
+            // sentence of reasoning. Accept that shape instead of discarding a valid action.
+            return TryParseCallSyntax(rawResponse)
+                ?? FaraActionParseResult.Failed(rawResponse, "The Fara response did not contain a JSON action.");
+        }
 
         try
         {
@@ -179,6 +195,202 @@ public sealed class FaraActionParser
 
         var center = new FaraCoordinate((values[0] + values[2]) / 2, (values[1] + values[3]) / 2);
         return FaraActionParseResult.Succeeded(new FaraAction(FaraActionType.LeftClick, center), rawResponse);
+    }
+
+    /// <summary>
+    /// Parses Fara's native tool-call syntax, e.g. <c>left_click(178, 594)</c>,
+    /// <c>type("hello")</c> or <c>computer.scroll(-300)</c>. The last call in the response wins,
+    /// because Fara typically reasons in prose first and emits the action last.
+    /// Returns <see langword="null"/> when no supported call is present.
+    /// </summary>
+    private static FaraActionParseResult? TryParseCallSyntax(string rawResponse)
+    {
+        for (var match = LastSupportedCall(rawResponse); match is not null; match = null)
+        {
+            var name = match.Groups["name"].Value.Trim().ToLowerInvariant();
+            var arguments = SplitArguments(match.Groups["args"].Value);
+
+            switch (name)
+            {
+                case "left_click":
+                case "right_click":
+                case "double_click":
+                {
+                    if (!TryReadCoordinate(arguments, 0, out var coordinate))
+                        break;
+
+                    var type = name switch
+                    {
+                        "right_click" => FaraActionType.RightClick,
+                        "double_click" => FaraActionType.DoubleClick,
+                        _ => FaraActionType.LeftClick
+                    };
+                    return FaraActionParseResult.Succeeded(new FaraAction(type, coordinate), rawResponse);
+                }
+
+                case "left_click_drag":
+                {
+                    if (!TryReadCoordinate(arguments, 0, out var start))
+                        break;
+
+                    TryReadCoordinate(arguments, 2, out var end);
+                    return FaraActionParseResult.Succeeded(
+                        new FaraAction(FaraActionType.LeftClickDrag, start, end), rawResponse);
+                }
+
+                case "type":
+                {
+                    var text = Unquote(arguments.FirstOrDefault());
+                    if (string.IsNullOrWhiteSpace(text))
+                        break;
+
+                    return FaraActionParseResult.Succeeded(
+                        new FaraAction(FaraActionType.Type, Text: text), rawResponse);
+                }
+
+                case "visit_url":
+                {
+                    var url = Unquote(arguments.FirstOrDefault());
+                    if (string.IsNullOrWhiteSpace(url))
+                        break;
+
+                    return FaraActionParseResult.Succeeded(
+                        new FaraAction(FaraActionType.VisitUrl, Url: url), rawResponse);
+                }
+
+                case "key":
+                {
+                    var keys = arguments
+                        .Select(Unquote)
+                        .Where(key => !string.IsNullOrWhiteSpace(key))
+                        .Select(key => key!)
+                        .ToArray();
+                    if (keys.Length == 0)
+                        break;
+
+                    return FaraActionParseResult.Succeeded(
+                        new FaraAction(FaraActionType.Key, Keys: keys), rawResponse);
+                }
+
+                case "scroll":
+                {
+                    // Fara emits either scroll(pixels) or scroll(x, y, pixels); the scroll
+                    // distance is always the last numeric argument.
+                    var numbers = arguments
+                        .Select(argument => double.TryParse(
+                            argument, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+                                ? value
+                                : (double?)null)
+                        .Where(value => value is not null)
+                        .Select(value => value!.Value)
+                        .ToArray();
+                    if (numbers.Length == 0)
+                        break;
+
+                    return FaraActionParseResult.Succeeded(
+                        new FaraAction(FaraActionType.Scroll, Pixels: numbers[^1]), rawResponse);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static Match? LastSupportedCall(string rawResponse)
+    {
+        var matches = CallSyntaxPattern.Matches(rawResponse);
+        return matches.Count == 0 ? null : matches[^1];
+    }
+
+    private static bool TryReadCoordinate(IReadOnlyList<string> arguments, int offset, out FaraCoordinate? coordinate)
+    {
+        coordinate = null;
+        if (arguments.Count < offset + 2)
+            return false;
+
+        if (!int.TryParse(arguments[offset], NumberStyles.Integer, CultureInfo.InvariantCulture, out var x) ||
+            !int.TryParse(arguments[offset + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var y))
+        {
+            return false;
+        }
+
+        coordinate = new FaraCoordinate(x, y);
+        return true;
+    }
+
+    /// <summary>
+    /// Splits a call's argument list on commas that are not inside a quoted string.
+    /// </summary>
+    private static string[] SplitArguments(string arguments)
+    {
+        var results = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var quote = '\0';
+        var escaped = false;
+
+        foreach (var c in arguments)
+        {
+            if (escaped)
+            {
+                current.Append(c);
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\')
+            {
+                current.Append(c);
+                escaped = true;
+                continue;
+            }
+
+            if (quote != '\0')
+            {
+                current.Append(c);
+                if (c == quote)
+                    quote = '\0';
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"':
+                case '\'':
+                    quote = c;
+                    current.Append(c);
+                    break;
+                case ',':
+                    results.Add(current.ToString().Trim());
+                    current.Clear();
+                    break;
+                default:
+                    current.Append(c);
+                    break;
+            }
+        }
+
+        if (current.Length > 0)
+            results.Add(current.ToString().Trim());
+
+        return results.Where(argument => argument.Length > 0).ToArray();
+    }
+
+    private static string? Unquote(string? argument)
+    {
+        if (string.IsNullOrWhiteSpace(argument))
+            return null;
+
+        var text = argument.Trim();
+
+        // Named arguments such as text="hello" are also emitted occasionally.
+        var equals = text.IndexOf('=');
+        if (equals > 0 && text[..equals].Trim().All(c => char.IsLetterOrDigit(c) || c == '_'))
+            text = text[(equals + 1)..].Trim();
+
+        if (text.Length >= 2 && (text[0] == '"' || text[0] == '\'') && text[^1] == text[0])
+            text = text[1..^1];
+
+        return text.Replace("\\\"", "\"").Replace("\\'", "'").Replace("\\n", "\n");
     }
 
     private static FaraActionParseResult ParseAction(

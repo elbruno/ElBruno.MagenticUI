@@ -118,22 +118,6 @@ public sealed class FaraScreenshotPredictionService : IScreenshotPredictionServi
             and not TimeoutException
             and not FaraVisionConfigurationException)
         {
-            // ElBruno.LocalLLMs 0.20.11 probes the multimodal input length with a generator
-            // built at max_length = int.MaxValue, which ONNX Runtime GenAI rejects for any model
-            // that declares a context_length. It aborts the request before generation starts.
-            // Tracked in elbruno/ElBruno.LocalLLMs#51. Remove once a fixed package ships.
-            if (ex.Message.Contains("context_length", StringComparison.OrdinalIgnoreCase) &&
-                ex.Message.Contains("max_length", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "Fara prediction is blocked by a known defect in ElBruno.LocalLLMs 0.20.11: its " +
-                    "vision input-length probe requests max_length=int.MaxValue, which ONNX Runtime " +
-                    "rejects because the model declares a smaller context_length. Downgrade to " +
-                    "0.20.10 or wait for the fix tracked in elbruno/ElBruno.LocalLLMs#51. " +
-                    $"Original error: {ex.Message}",
-                    ex);
-            }
-
             throw new InvalidOperationException($"Fara screenshot prediction failed: {ex.Message}", ex);
         }
 

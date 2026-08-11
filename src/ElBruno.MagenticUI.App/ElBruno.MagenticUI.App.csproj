@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ElBruno.LocalLLMs" Version="0.20.11" />
+    <PackageReference Include="ElBruno.LocalLLMs" Version="0.21.0" />
     <!-- GPU note: Microsoft.ML.OnnxRuntimeGenAI.Cuda 0.15.x is built against ONNX Runtime 1.28,
          whose CUDA execution provider requires the CUDA 13 runtime (cublasLt64_13.dll) and an
          NVIDIA driver >= 580, neither of which ONNX Runtime redistributes. The CPU package is
@@ -19,7 +19,7 @@
          See docs/fara-execution-providers.md. -->
     <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.15.1" />
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.3" />
-    <PackageReference Include="ElBruno.LocalLLMs.BlazorComponents" Version="0.20.11" />
+    <PackageReference Include="ElBruno.LocalLLMs.BlazorComponents" Version="0.21.0" />
   </ItemGroup>
 
   <ItemGroup>
