@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ElBruno.LocalLLMs" Version="0.20.10" />
+    <PackageReference Include="ElBruno.LocalLLMs" Version="0.20.11" />
     <PackageReference Include="ElBruno.MarkItDotNet" Version="0.9.*" />
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.3" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />

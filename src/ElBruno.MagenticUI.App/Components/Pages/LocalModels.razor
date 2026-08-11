@@ -16,18 +16,18 @@
     <div class="card shadow-sm mb-4">
         <div class="card-body">
             <h2 class="h5">Environment</h2>
-            <EnvironmentDashboard />
+            <p class="text-muted small">
+                Hardware, runtime, and execution-provider readiness reported by
+                <code>ElBruno.LocalLLMs</code>, including which providers passed preflight and why
+                any of them are unavailable.
+            </p>
+            <EnvironmentDashboard ShowCacheInfo="true" ShowOpenFolderButton="true" />
         </div>
     </div>
 
     <div class="card shadow-sm mb-4">
         <div class="card-body">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-                <h2 class="h5 mb-0">Local models</h2>
-                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="OpenCacheFolder">
-                    📂 Open cache folder
-                </button>
-            </div>
+            <h2 class="h5 mb-2">Local models</h2>
             <p class="text-muted small">
                 MagenticUI uses <code>Phi-3.5-mini-instruct</code> for text orchestration and
                 <code>Fara1.5-9B</code> for screenshot visual grounding. Models auto-download from
@@ -38,6 +38,7 @@
             </p>
             <p class="text-muted small mb-2">
                 Cache directory: <code>@ModelState.CacheDirectory</code>
+                (use <strong>Open folder</strong> in the Environment panel above to browse it).
             </p>
             <p class="text-muted small mb-3">
                 ℹ️ Large downloads (Fara1.5-9B is ~10&nbsp;GB, MagenticBrain is several GB) run on the server
@@ -58,25 +59,4 @@
         KnownModels.Fara15_9B,
         KnownModels.MagenticBrain
     ];
-
-    private void OpenCacheFolder()
-    {
-        var path = ModelState.CacheDirectory;
-        if (!Directory.Exists(path))
-            Directory.CreateDirectory(path);
-
-        try
-        {
-            if (OperatingSystem.IsWindows())
-                System.Diagnostics.Process.Start("explorer.exe", path);
-            else if (OperatingSystem.IsMacOS())
-                System.Diagnostics.Process.Start("open", path);
-            else
-                System.Diagnostics.Process.Start("xdg-open", path);
-        }
-        catch
-        {
-            // Not critical — the path is still shown in the page for manual navigation.
-        }
-    }
 }

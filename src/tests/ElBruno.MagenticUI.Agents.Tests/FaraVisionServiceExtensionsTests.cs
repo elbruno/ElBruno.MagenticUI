@@ -112,4 +112,53 @@ public sealed class FaraVisionServiceExtensionsTests
         Assert.Equal(@"C:\Models\Fara1.5-9B", options.ModelPath);
         Assert.False(options.EnsureModelDownloaded);
     }
+
+    [Fact]
+    public void ExecutionProviderPlan_IsRegisteredForTheUi()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+
+        // Act
+        services.AddFaraVisionLLM(new FaraVisionOptions { ExecutionProvider = "Cuda" });
+
+        var provider = services.BuildServiceProvider();
+        var plan = provider.GetRequiredKeyedService<ExecutionProviderPlan>(
+            FaraVisionServiceExtensions.ServiceKey);
+        var options = provider.GetRequiredKeyedService<LocalLLMsOptions>(
+            FaraVisionServiceExtensions.ServiceKey);
+
+        // Assert
+        Assert.Equal(ExecutionProvider.Cuda, plan.Requested);
+        Assert.Equal(plan.Effective, options.ExecutionProvider);
+        Assert.False(string.IsNullOrWhiteSpace(plan.Detail));
+    }
+
+    [Fact]
+    public void UnrecognizedExecutionProvider_FallsBackToAuto()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+
+        // Act
+        services.AddFaraVisionLLM(new FaraVisionOptions { ExecutionProvider = "not-a-provider" });
+
+        var plan = services.BuildServiceProvider()
+            .GetRequiredKeyedService<ExecutionProviderPlan>(FaraVisionServiceExtensions.ServiceKey);
+
+        // Assert
+        Assert.Equal(ExecutionProvider.Auto, plan.Requested);
+    }
+
+    [Fact]
+    public void MaxOutputTokens_DefaultsToASmallActionBudget()
+    {
+        // Arrange & Act
+        var options = new FaraVisionOptions();
+
+        // Assert
+        // Predictions are a single short JSON action; a small budget keeps CPU inference from
+        // generating up to MaxSequenceLength. Safe again since ElBruno.LocalLLMs 0.20.11.
+        Assert.Equal(128, options.MaxOutputTokens);
+    }
 }

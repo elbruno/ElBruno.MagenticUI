@@ -7,19 +7,20 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ElBruno.LocalLLMs" Version="0.20.10" />
+    <PackageReference Include="ElBruno.LocalLLMs" Version="0.20.11" />
     <!-- GPU note: Microsoft.ML.OnnxRuntimeGenAI.Cuda 0.15.x is built against ONNX Runtime 1.28,
          whose CUDA execution provider requires the CUDA 13 runtime (cublasLt64_13.dll) and an
-         NVIDIA driver >= 580. Referencing it on a machine that only has CUDA 12 makes the native
-         provider load fail with an access violation that kills the process, so the CPU package is
-         used here. CudaRuntimeResolver detects a usable CUDA 13 runtime at startup and the app
-         only requests the CUDA provider when one is present.
+         NVIDIA driver >= 580, neither of which ONNX Runtime redistributes. The CPU package is
+         referenced here so the app runs anywhere; swap it for the .Cuda package on a machine
+         with a matching CUDA 13 stack. ElBruno.LocalLLMs 0.20.11 preflights providers and falls
+         back safely, so a missing GPU stack no longer crashes the process.
          Direct reference required: OnnxRuntimeGenAI's buildTransitive/ omits win-x64, so the
          native onnxruntime-genai.dll is only copied when referenced directly.
          See docs/fara-execution-providers.md. -->
     <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.15.1" />
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.3" />
-    <PackageReference Include="ElBruno.LocalLLMs.BlazorComponents" Version="0.20.10" />  </ItemGroup>
+    <PackageReference Include="ElBruno.LocalLLMs.BlazorComponents" Version="0.20.11" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ElBruno.MagenticUI.Agents\ElBruno.MagenticUI.Agents.csproj" />

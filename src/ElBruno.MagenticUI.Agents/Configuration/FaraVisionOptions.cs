@@ -17,12 +17,11 @@ public sealed class FaraVisionOptions
     public string ExecutionProvider { get; set; } = "Auto";
 
     /// <summary>
-    /// Optional directory containing the CUDA 12 / cuDNN 9 native libraries
-    /// (<c>cudart64_12.dll</c>, <c>cublas64_12.dll</c>, <c>cublasLt64_12.dll</c>,
-    /// <c>cudnn64_9.dll</c>). ONNX Runtime does not redistribute these. When empty,
-    /// well-known install locations are probed automatically.
+    /// Maximum tokens Fara may generate for a single prediction. A prediction is a short
+    /// JSON action, so a small budget keeps CPU inference from running to
+    /// <see cref="MaxSequenceLength"/> and repeating itself.
     /// </summary>
-    public string? CudaDependencyPath { get; set; }
+    public int MaxOutputTokens { get; set; } = 128;
 
     /// <summary>
     /// Maximum time allowed for a single Fara prediction, including first-use

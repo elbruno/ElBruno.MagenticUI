@@ -23,18 +23,9 @@ public static class FaraVisionServiceExtensions
         var cacheDirectory = NormalizePath(configuration.CacheDirectory);
         var requestedProvider = ParseExecutionProvider(configuration.ExecutionProvider);
 
-        // The CUDA provider needs NVIDIA's native libraries on the loader search path before
-        // the first model is created, otherwise ONNX Runtime silently falls back to CPU.
-        var cudaStatus = requestedProvider is ExecutionProvider.Cpu
-            ? new CudaRuntimeStatus(false, null, [], "CPU execution provider was requested explicitly.")
-            : CudaRuntimeResolver.EnsureAvailable(configuration.CudaDependencyPath);
-
-        // Asking for CUDA when its dependencies are missing does not degrade gracefully — the
-        // native provider load fails with an access violation that terminates the process — so
-        // fall back to CPU, which is always available.
-        var effectiveProvider = requestedProvider is not ExecutionProvider.Cpu && !cudaStatus.Available
-            ? ExecutionProvider.Cpu
-            : requestedProvider;
+        // ElBruno.LocalLLMs 0.20.11 preflights accelerated providers and falls back safely, so
+        // the plan is only used to explain the choice in the UI before the first prediction.
+        var providerPlan = ExecutionProviderPlanner.Plan(requestedProvider, cacheDirectory);
 
         var options = new LocalLLMsOptions
         {
@@ -46,12 +37,12 @@ public static class FaraVisionServiceExtensions
             Temperature = configuration.Temperature,
             TopP = configuration.TopP,
             GpuDeviceId = configuration.GpuDeviceId,
-            ExecutionProvider = effectiveProvider
+            ExecutionProvider = providerPlan.Effective
         };
 
         services.AddKeyedSingleton<LocalLLMsOptions>(ServiceKey, options);
         services.AddKeyedSingleton(ServiceKey, configuration);
-        services.AddKeyedSingleton(ServiceKey, cudaStatus);
+        services.AddKeyedSingleton(ServiceKey, providerPlan);
         services.AddKeyedSingleton<LocalVisionChatClient>(ServiceKey, (sp, _) =>
             new LocalVisionChatClient(
                 sp.GetRequiredKeyedService<LocalLLMsOptions>(ServiceKey),

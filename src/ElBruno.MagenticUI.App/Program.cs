@@ -48,8 +48,10 @@ var faraVisionOptions = new FaraVisionOptions();
 builder.Configuration.GetSection(FaraVisionOptions.SectionName).Bind(faraVisionOptions);
 builder.Services.AddFaraVisionLLM(faraVisionOptions);
 
-// ── Blazor components for model management (Settings page) ────────────────
-builder.Services.AddLocalLLMsBlazorComponents();
+// ── Blazor components for model management (Local models page) ───────────
+// EnableHostFolderActions opts in to the library's "open folder" buttons. This app runs
+// locally on the user's own machine, so launching the OS file browser is expected.
+builder.Services.AddLocalLLMsBlazorComponents(options => options.EnableHostFolderActions = true);
 
 // ── Tools ─────────────────────────────────────────────────────────────────
 var configuredWorkDir = builder.Configuration["LocalLLMs:WorkingDirectory"];

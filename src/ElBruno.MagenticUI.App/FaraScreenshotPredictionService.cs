@@ -16,24 +16,26 @@ public sealed class FaraScreenshotPredictionService : IScreenshotPredictionServi
     private const int CoordinateSpaceSize = 1000;
     private const int MaxImageBytes = 10 * 1024 * 1024;
     private readonly TimeSpan _predictionTimeout;
+    private readonly int _maxOutputTokens;
     private readonly IChatClient _client;
     private readonly LocalLLMsOptions _options;
     private readonly FaraActionParser _parser;
-    private readonly CudaRuntimeStatus _cudaStatus;
+    private readonly ExecutionProviderPlan _providerPlan;
 
     public FaraScreenshotPredictionService(
         [FromKeyedServices(FaraVisionServiceExtensions.ServiceKey)] IChatClient client,
         [FromKeyedServices(FaraVisionServiceExtensions.ServiceKey)] LocalLLMsOptions options,
         [FromKeyedServices(FaraVisionServiceExtensions.ServiceKey)] FaraVisionOptions visionOptions,
-        [FromKeyedServices(FaraVisionServiceExtensions.ServiceKey)] CudaRuntimeStatus cudaStatus,
+        [FromKeyedServices(FaraVisionServiceExtensions.ServiceKey)] ExecutionProviderPlan providerPlan,
         FaraActionParser parser)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _parser = parser ?? throw new ArgumentNullException(nameof(parser));
-        _cudaStatus = cudaStatus ?? throw new ArgumentNullException(nameof(cudaStatus));
+        _providerPlan = providerPlan ?? throw new ArgumentNullException(nameof(providerPlan));
         ArgumentNullException.ThrowIfNull(visionOptions);
         _predictionTimeout = TimeSpan.FromSeconds(Math.Max(1, visionOptions.PredictionTimeoutSeconds));
+        _maxOutputTokens = Math.Max(1, visionOptions.MaxOutputTokens);
     }
 
     public async Task<ScreenshotPredictionResult> PredictAsync(
@@ -69,11 +71,10 @@ public sealed class FaraScreenshotPredictionService : IScreenshotPredictionServi
                 new VisionChatOptions
                 {
                     ImagePaths = [imagePath],
-                    // MaxOutputTokens is deliberately not set. ElBruno.LocalLLMs derives ONNX
-                    // Runtime's max_length from the *text* prompt token count, which excludes the
-                    // thousands of vision tokens the processor injects, so any value produces
-                    // "input_ids size (N) exceeds max length". Leaving it unset uses
-                    // MaxSequenceLength instead. Tracked in elbruno/ElBruno.LocalLLMs.
+                    // Safe since ElBruno.LocalLLMs 0.20.11: max_length is now derived from the
+                    // full multimodal input_ids (text + vision tokens), so a small output budget
+                    // no longer trips "input_ids size (N) exceeds max length".
+                    MaxOutputTokens = _maxOutputTokens,
                     Temperature = 0.1f
                 },
                 linked.Token);
@@ -117,6 +118,22 @@ public sealed class FaraScreenshotPredictionService : IScreenshotPredictionServi
             and not TimeoutException
             and not FaraVisionConfigurationException)
         {
+            // ElBruno.LocalLLMs 0.20.11 probes the multimodal input length with a generator
+            // built at max_length = int.MaxValue, which ONNX Runtime GenAI rejects for any model
+            // that declares a context_length. It aborts the request before generation starts.
+            // Tracked in elbruno/ElBruno.LocalLLMs#51. Remove once a fixed package ships.
+            if (ex.Message.Contains("context_length", StringComparison.OrdinalIgnoreCase) &&
+                ex.Message.Contains("max_length", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Fara prediction is blocked by a known defect in ElBruno.LocalLLMs 0.20.11: its " +
+                    "vision input-length probe requests max_length=int.MaxValue, which ONNX Runtime " +
+                    "rejects because the model declares a smaller context_length. Downgrade to " +
+                    "0.20.10 or wait for the fix tracked in elbruno/ElBruno.LocalLLMs#51. " +
+                    $"Original error: {ex.Message}",
+                    ex);
+            }
+
             throw new InvalidOperationException($"Fara screenshot prediction failed: {ex.Message}", ex);
         }
 
@@ -169,11 +186,11 @@ public sealed class FaraScreenshotPredictionService : IScreenshotPredictionServi
         var isGpu = active is ExecutionProvider.Cuda or ExecutionProvider.DirectML;
 
         var detail = isGpu
-            ? $"Fara is running on the {active} execution provider."
-            : _cudaStatus.Available
-                ? $"Fara is running on {active}. GPU libraries were found at '{_cudaStatus.Directory}', " +
-                  "so this usually means the model has not been loaded yet — run a prediction to initialize it."
-                : $"Fara is running on {active}. {_cudaStatus.Detail}";
+            ? $"Fara is running on the {active} execution provider. {_providerPlan.Detail}".Trim()
+            : active is ExecutionProvider.Auto
+                ? $"The execution provider is selected when the model is first loaded. {_providerPlan.Detail}".Trim()
+                : $"Fara is running on {active}. {_providerPlan.Detail}".Trim();
+
         return new FaraExecutionProviderStatus(active.ToString(), isGpu, detail);
     }
 
