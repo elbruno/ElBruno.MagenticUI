@@ -295,13 +295,20 @@ coordinates, together with a marker over the screenshot. The marker is scaled to
 displayed image even when the browser resizes it. The raw model response is available
 in the diagnostics section.
 
-The **Generate annotated result image** checkbox (checked by default) additionally
-renders a copy of the screenshot with the predicted action baked in as an overlay —
-a marker with a numbered step badge, a dashed connector for drag actions, and an
-instruction label such as "1. Right-click here" or `Type: "..."`. This annotated image
-is shown as the process result instead of the raw preview, so the next action is
-immediately obvious without reading the structured result panel. Uncheck the box to
-skip rendering and fall back to the plain preview with an HTML marker overlay.
+The **Draw predicted click location and instructions** checkbox (checked by default)
+renders the predicted action's marker and a short "What to do" instruction (for
+example "1. Right-click here" or `Type: "..."`) entirely in the browser, positioned
+as a percentage over the preview image using the coordinates already returned in the
+prediction result — no extra server round-trip or image download is needed. Drag
+actions get a numbered start/end marker pair connected by a dashed line. Uncheck the
+box to fall back to the plain preview with a small text-tag marker instead.
+
+A second, unchecked-by-default checkbox — **Also generate a downloadable annotated
+image (server-rendered, optional)** — asks the server to additionally render a
+flattened PNG copy of the screenshot with the same overlay baked in, useful when you
+want a single image to save or share (for example in a bug report). This uses the
+same `ScreenshotOverlayRenderer` used previously and is shown in its own card below
+the client-side overlay when enabled.
 
 > **Safety boundary:** This page performs prediction and visualization only. It never
 > clicks, types, submits forms, sends messages, visits URLs, or otherwise controls a
