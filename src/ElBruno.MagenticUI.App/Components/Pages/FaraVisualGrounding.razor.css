@@ -46,3 +46,46 @@
 .predicted-arrow line { stroke: #2563eb; stroke-width: 1.5; stroke-dasharray: 3, 2; }
 
 @media (max-width: 576px) { .coordinate-marker span { font-size: .6rem; top: -1.2rem; } }
+
+/* Collapsible CPU/GPU execution-provider status card: collapsed by default so it
+   doesn't dominate the page, but always shows a one-line summary badge. Pure CSS
+   max-height transition — no JS collapse library needed. */
+.provider-status-toggle {
+    background: transparent;
+    border: none;
+    padding: .6rem 1rem;
+    font-weight: 500;
+}
+.provider-status-chevron { transition: transform .2s ease; display: inline-block; }
+.provider-status-chevron.expanded { transform: rotate(180deg); }
+.provider-status-body { max-height: 0; overflow: hidden; transition: max-height .25s ease; }
+.provider-status-body.expanded { max-height: 20rem; }
+
+/* Floating "Predicting…" indicator: fixed to the viewport so it stays visible no
+   matter how far the user scrolls down the (potentially long) results column while
+   a multi-minute CPU prediction is running. */
+.predicting-toast {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    max-width: 320px;
+    padding: .75rem 1rem;
+    border-radius: .75rem;
+    background: #0d6efd;
+    color: #fff;
+    box-shadow: 0 .5rem 1.5rem rgb(0 0 0 / 25%);
+    animation: predicting-toast-in .25s ease;
+}
+.predicting-toast-text { display: flex; flex-direction: column; line-height: 1.2; }
+.predicting-toast-elapsed { font-size: .75rem; opacity: .85; }
+@keyframes predicting-toast-in {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+@media (max-width: 576px) {
+    .predicting-toast { left: 1rem; right: 1rem; bottom: 1rem; max-width: none; }
+}

@@ -9,6 +9,18 @@
 
 <PageTitle>Screenshot prediction · MagenticUI</PageTitle>
 
+@if (isBusy)
+{
+    <div class="predicting-toast" role="status" aria-live="polite">
+        <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+        <div class="predicting-toast-text">
+            <strong>@BusyLabel</strong>
+            <span class="predicting-toast-elapsed">@ElapsedLabel elapsed</span>
+        </div>
+        <button type="button" class="btn-close btn-close-white flex-shrink-0" aria-label="Cancel prediction" @onclick="Cancel"></button>
+    </div>
+}
+
 <div class="container-fluid py-4 prediction-page">
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
         <div>
@@ -16,10 +28,6 @@
             <p class="text-muted mb-0">Describe your goal and inspect Fara's predicted action from an uploaded screenshot.</p>
         </div>
         <span class="badge @StatusClass">@StatusText</span>
-    </div>
-
-    <div class="alert alert-info" role="status">
-        <strong>Prediction-only mode.</strong> Results describe predicted actions and coordinates; this page never opens a browser or executes actions.
     </div>
 
     @if (isLoadingProviderStatus)
@@ -40,18 +48,35 @@
         </div>
     }
 
-    @if (providerStatus is not null && !providerStatus.IsGpu)
+    @if (providerStatus is not null)
     {
-        <div class="alert alert-warning" role="status">
-            <strong>Running on CPU (@providerStatus.Provider).</strong> Fara1.5-9B is a 9-billion-parameter vision
-            model, so a prediction takes several minutes on CPU. Keep this tab open until it finishes.
-            <span class="d-block mt-1 small">@providerStatus.Detail</span>
-        </div>
-    }
-    else if (providerStatus is not null)
-    {
-        <div class="alert alert-success py-2" role="status">
-            <strong>GPU acceleration active (@providerStatus.Provider).</strong> @providerStatus.Detail
+        <div class="card shadow-sm mb-3 provider-status-card @(providerStatus.IsGpu ? "border-success" : "border-warning")">
+            <button type="button" class="btn provider-status-toggle d-flex justify-content-between align-items-center w-100"
+                    @onclick="() => showProviderDetails = !showProviderDetails"
+                    aria-expanded="@showProviderDetails.ToString().ToLowerInvariant()">
+                <span>
+                    @if (providerStatus.IsGpu)
+                    {
+                        <span class="badge bg-success me-2">GPU</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-warning text-dark me-2">CPU</span>
+                    }
+                    <span>@(providerStatus.IsGpu ? "GPU acceleration active" : "Running on CPU") (@providerStatus.Provider)</span>
+                </span>
+                <span class="provider-status-chevron @(showProviderDetails ? "expanded" : "")" aria-hidden="true">▾</span>
+            </button>
+            <div class="provider-status-body @(showProviderDetails ? "expanded" : "")">
+                <div class="card-body pt-0 small text-muted">
+                    @if (!providerStatus.IsGpu)
+                    {
+                        <p class="mb-1">Fara1.5-9B is a 9-billion-parameter vision model, so a prediction takes
+                        several minutes on CPU. Keep this tab open until it finishes.</p>
+                    }
+                    <p class="mb-0">@providerStatus.Detail</p>
+                </div>
+            </div>
         </div>
     }
 
@@ -164,11 +189,15 @@
                         <p class="mb-1 fw-semibold">@ScreenshotOverlayRenderer.BuildInstruction(ClientOverlayAction)</p>
                         @if (ClientOverlayAction.Coordinate is not null)
                         {
-                            <p class="text-muted small mb-0">
+                            <p class="text-muted small mb-1">
                                 Predicted location: @(Pct(ClientOverlayAction.Coordinate.X).ToString("0.#"))%, @(Pct(ClientOverlayAction.Coordinate.Y).ToString("0.#"))% of the screenshot
                                 (markers 1@(ClientOverlayAction.EndCoordinate is not null ? " → 2" : "") shown above; rendered locally in your browser, no extra image download required).
                             </p>
                         }
+                        <p class="text-muted small mb-0">
+                            <strong>Verify before acting:</strong> visual grounding models aren't always
+                            pixel-perfect — double-check the highlighted spot against the goal before relying on it.
+                        </p>
                     </div>
                 </div>
             }
@@ -252,9 +281,13 @@
     private bool isBusy;
     private bool showPredictedAction = true;
     private bool generateAnnotatedOverlay;
+    private bool showProviderDetails;
     private FaraModelCacheStatus? modelCacheStatus;
     private FaraExecutionProviderStatus? providerStatus;
     private bool isLoadingProviderStatus = true;
+    private DateTimeOffset? predictionStartedAt;
+    private PeriodicTimer? elapsedTimer;
+    private CancellationTokenSource? elapsedTimerCts;
 
     private string StatusText => isBusy ? "Predicting…" : lastResult is not null ? "Ready" : "Idle";
     private string StatusClass => isBusy ? "bg-primary" : lastResult is not null ? "bg-success" : "bg-secondary";
@@ -265,6 +298,13 @@
     private string? AnnotatedImageUrl => lastResult?.AnnotatedImage is { Length: > 0 } bytes
         ? $"data:{lastResult.AnnotatedImageContentType ?? "image/png"};base64,{Convert.ToBase64String(bytes)}"
         : null;
+    private string ElapsedLabel => predictionStartedAt is { } startedAt
+        ? (DateTimeOffset.UtcNow - startedAt) switch
+        {
+            { TotalMinutes: >= 1 } elapsed => $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s",
+            var elapsed => $"{(int)elapsed.TotalSeconds}s"
+        }
+        : "0s";
 
     /// <summary>
     /// The predicted action to render as a client-side overlay, or null when the
@@ -355,6 +395,7 @@
         isBusy = true;
         predictionCts?.Dispose();
         predictionCts = new CancellationTokenSource();
+        StartElapsedTicker();
         try
         {
             var result = await PredictionService.PredictAsync(
@@ -374,9 +415,47 @@
         finally
         {
             isBusy = false;
+            StopElapsedTicker();
             modelCacheStatus = await Task.Run(PredictionService.GetModelCacheStatus);
             providerStatus = await Task.Run(PredictionService.GetExecutionProviderStatus);
         }
+    }
+
+    /// <summary>
+    /// Keeps the floating "Predicting…" indicator's elapsed time fresh once a second so it
+    /// stays visibly alive (not just a static spinner) no matter where the user has scrolled —
+    /// the indicator itself is pinned via CSS (position: fixed), independent of scroll position.
+    /// </summary>
+    private void StartElapsedTicker()
+    {
+        predictionStartedAt = DateTimeOffset.UtcNow;
+        elapsedTimerCts?.Cancel();
+        elapsedTimerCts?.Dispose();
+        elapsedTimerCts = new CancellationTokenSource();
+        elapsedTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        _ = RunElapsedTickerAsync(elapsedTimer, elapsedTimerCts.Token);
+    }
+
+    private async Task RunElapsedTickerAsync(PeriodicTimer timer, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private void StopElapsedTicker()
+    {
+        elapsedTimerCts?.Cancel();
+        elapsedTimerCts?.Dispose();
+        elapsedTimerCts = null;
+        elapsedTimer?.Dispose();
+        elapsedTimer = null;
+        predictionStartedAt = null;
     }
 
     private void Cancel() => predictionCts?.Cancel();
@@ -396,6 +475,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        StopElapsedTicker();
         if (predictionCts is not null) await predictionCts.CancelAsync();
         predictionCts?.Dispose();
     }
