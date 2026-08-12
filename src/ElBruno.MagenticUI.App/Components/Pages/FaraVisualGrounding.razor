@@ -21,6 +21,15 @@
         <strong>Prediction-only mode.</strong> Results describe predicted actions and coordinates; this page never opens a browser or executes actions.
     </div>
 
+    @if (isLoadingProviderStatus)
+    {
+        <div class="alert alert-secondary py-2 d-flex align-items-center gap-2" role="status">
+            <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+            <span>Checking the Fara model and execution provider… the page is already interactive, so you can start
+            typing your goal while this resolves.</span>
+        </div>
+    }
+
     @if (modelCacheStatus is { IsCached: false })
     {
         <div class="alert alert-warning" role="status">
@@ -202,6 +211,7 @@
     private bool generateAnnotatedOverlay = true;
     private FaraModelCacheStatus? modelCacheStatus;
     private FaraExecutionProviderStatus? providerStatus;
+    private bool isLoadingProviderStatus = true;
 
     private string StatusText => isBusy ? "Predicting…" : lastResult is not null ? "Ready" : "Idle";
     private string StatusClass => isBusy ? "bg-primary" : lastResult is not null ? "bg-success" : "bg-secondary";
@@ -215,8 +225,28 @@
 
     protected override void OnInitialized()
     {
-        modelCacheStatus = PredictionService.GetModelCacheStatus();
-        providerStatus = PredictionService.GetExecutionProviderStatus();
+        // GetExecutionProviderStatus() forces the Fara model to load (see its doc comment),
+        // which can take tens of seconds. Running that synchronously here would block the
+        // Blazor Server circuit during its interactive handshake, leaving the page looking
+        // rendered but non-interactive (button clicks silently do nothing). Resolve it on a
+        // background thread instead, so the circuit becomes interactive immediately.
+        _ = LoadDiagnosticsAsync();
+    }
+
+    private async Task LoadDiagnosticsAsync()
+    {
+        try
+        {
+            var cache = await Task.Run(PredictionService.GetModelCacheStatus);
+            var provider = await Task.Run(PredictionService.GetExecutionProviderStatus);
+            modelCacheStatus = cache;
+            providerStatus = provider;
+        }
+        finally
+        {
+            isLoadingProviderStatus = false;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private async Task SelectSampleAsync(SampleImage sample)
@@ -286,8 +316,8 @@
         finally
         {
             isBusy = false;
-            modelCacheStatus = PredictionService.GetModelCacheStatus();
-            providerStatus = PredictionService.GetExecutionProviderStatus();
+            modelCacheStatus = await Task.Run(PredictionService.GetModelCacheStatus);
+            providerStatus = await Task.Run(PredictionService.GetExecutionProviderStatus);
         }
     }
 
